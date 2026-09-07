@@ -69,3 +69,4 @@ live
 - automation-portfolio-sync
 - doc-sync
 - humanizer
+- artifact-design
