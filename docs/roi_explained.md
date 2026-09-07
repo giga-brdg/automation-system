@@ -10,6 +10,40 @@ own dashboard codebase specifically, since that's what lives here — another
 automation's `docs/roi_explained.md` won't have an equivalent implementation trace
 to write, just its own hypothesis and methodology for its own ROI number.
 
+## Value Hypothesis
+
+The Estimated hypothesis below isn't just an adjective — it rests on two concrete
+mechanisms, each with real numbers behind it as of this writing.
+
+**Quality.** Before this dashboard, an automation's actual status lived only in scattered
+places — its own GitHub repo, a ClickUp task, or whoever happened to remember a Slack
+conversation about it. `dashboard/SUMMARY.md`'s own "What it does" names the real
+failure mode this causes: without one shared list, automations "дублюються, губляться
+або просто через рік ніхто не пам'ятає, для чого їх колись зробили." The Виміряно/Оцінка
+split (see Caveats) is a structural quality mechanism, not just a label: `github_sync.py`
+only ever flips a card's confidence to "measured" when its Confidence section's text
+literally starts with that word, so a plain hypothesis can't silently pass itself off as
+a verified result. How many cards in the live portfolio actually say "Виміряно" today is
+a fact about the production dashboard's real data, not this repo's code — read it off the
+dashboard itself rather than trusting a count written into this file, since that number
+moves every time an automation registers or re-syncs (and this repo's own local dev
+database is seed data for testing, not a stand-in for that live count).
+
+**Time.** The GitHub-pull sync (`/automations/<slug>/resync`, the "Оновити з GitHub"
+button, and the initial `/automations/import-github` import) mechanically replaces a
+manual step: each call reads structured fields out of 6 separate files in the target
+repo (`README.md`, `dashboard/ROI.md`, `dashboard/SUMMARY.md`, `dashboard/functions.md`,
+`dashboard/TODO.md`, `backlog/BACKLOG.md` — see `README.md`'s own description of what
+`import-github` reads) that someone would otherwise open one at a time and copy into a
+tracker by hand. That six-file count is a fact about the documented import behavior
+itself, not something that depends on how many automations happen to be registered right
+now. Putting the manual version of that pass at roughly 10-15 minutes per automation per
+update (open 6 files, find the fields, retype them somewhere) is a stated, reasonable
+ESTIMATE, not a measured one — same Confidence as everything else here — but it's the
+actual arithmetic behind "this saves time," not just a claim. That per-sync saving
+doesn't get more expensive as the portfolio grows; hunting the same information by hand
+across GitHub, ClickUp, and chat does.
+
 ## Methodology
 Per-automation ROI card shows time and/or money saved vs. the manual process it
 replaced, plus an optional qualitative-value list and an optional presentation link
