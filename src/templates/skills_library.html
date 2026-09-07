@@ -34,7 +34,18 @@
     </div>
     <div class="card-name sora">{{ s.name }}</div>
     <div style="font-size:12px; color:var(--text-muted); line-height:1.5;">{{ s.description }}</div>
-    {% if s.doc_url %}<a href="{{ s.doc_url }}" style="font-size:11.5px;">Документація →</a>{% endif %}
+    <div style="display:flex; gap:12px; align-items:center;">
+      {% if s.doc_url %}<a href="{{ s.doc_url }}" style="font-size:11.5px;">Документація →</a>{% endif %}
+      {% if s.repo_url %}<a href="{{ s.repo_url }}" style="font-size:11.5px;">GitHub →</a>{% endif %}
+    </div>
+    {% if s.repo_url %}
+    <a class="btn" href="{{ url_for('skill_download', skill_id=s.id) }}" style="font-size:12px; padding:6px 12px; align-self:flex-start;">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/>
+      </svg>
+      Завантажити
+    </a>
+    {% endif %}
     <div class="skill-footer">Використовується в {{ s.automations|length }} автоматизаці{{ "ї" if s.automations|length == 1 else "ях" }}</div>
   </div>
   {% endfor %}

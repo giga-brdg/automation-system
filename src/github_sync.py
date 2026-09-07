@@ -92,6 +92,51 @@ def fetch_raw_file(owner, repo, path, branch):
         raise
 
 
+def fetch_raw_bytes(owner, repo, path, branch):
+    """Byte-preserving twin of fetch_raw_file - used to package a skill's
+    folder into a downloadable zip, where a file (an image under
+    templates/, say) isn't guaranteed to be valid UTF-8 text."""
+    url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
+    req = urllib.request.Request(url, headers=_github_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def fetch_directory_tree(owner, repo, path, branch):
+    """Recursively walks a folder via the Contents API (list_directory has no
+    raw.githubusercontent.com equivalent for a directory, only for a single
+    file) and returns {relative_path: bytes} for every file under it - a
+    skill's SKILL.md plus whatever references/scripts/templates it ships.
+    `path` is the skill's own root (a bare repo's "" for a one-repo-per-skill
+    import, or a subdirectory for the shared-skills-repo convention) and is
+    stripped from every returned key so the zip's entries are relative to
+    that root, not to the repo root."""
+    result = {}
+
+    def walk(rel):
+        full_path = f"{path}/{rel}".strip("/") if rel else path
+        entries = list_directory(owner, repo, full_path, branch)
+        if entries is None:
+            return
+        for e in entries:
+            child_rel = f"{rel}/{e['name']}" if rel else e["name"]
+            if e["type"] == "dir":
+                walk(child_rel)
+            else:
+                child_full = f"{path}/{child_rel}".strip("/") if child_rel else path
+                content = fetch_raw_bytes(owner, repo, child_full, branch)
+                if content is not None:
+                    result[child_rel] = content
+
+    walk("")
+    return result
+
+
 def list_directory(owner, repo, path, branch):
     """Lists a folder's direct entries via GitHub's Contents API - there's
     no raw.githubusercontent.com equivalent for a directory listing, only

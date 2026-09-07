@@ -1,12 +1,15 @@
+import io
 import os
+import re
 import secrets
+import zipfile
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
 import click
 from dotenv import load_dotenv
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
 from . import github_sync, telegram
@@ -572,6 +575,43 @@ def register_routes(app):
     def skills_library():
         skills = Skill.query.order_by(Skill.name).all()
         return render_template("skills_library.html", skills=skills)
+
+    @app.route("/skills/<int:skill_id>/download")
+    @login_required
+    def skill_download(skill_id):
+        """Packages the skill's folder (SKILL.md plus any references/
+        scripts/templates) straight from GitHub into a zip, for someone who
+        wants the skill itself rather than just a link to read it - a skill
+        with no repo_url (added via the API sync payload or seed-demo, never
+        through /skills/import-github) has nothing to fetch, so there's
+        nothing to download."""
+        skill = Skill.query.get_or_404(skill_id)
+        if not skill.repo_url:
+            abort(404)
+        parsed = github_sync.parse_repo_or_folder_url(skill.repo_url)
+        if not parsed:
+            abort(404)
+        owner_gh, repo, branch, path = parsed
+        if branch is None:
+            branch = github_sync.default_branch(owner_gh, repo)
+        try:
+            files = github_sync.fetch_directory_tree(owner_gh, repo, path or "", branch)
+        except Exception:
+            app.logger.exception("Skill download failed for %s", skill.repo_url)
+            flash("Не вдалося завантажити файли скіла з GitHub.")
+            return redirect(url_for("skills_library"))
+        if not files:
+            flash("У цьому скілі не знайдено файлів для завантаження.")
+            return redirect(url_for("skills_library"))
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for rel_path, content in files.items():
+                zf.writestr(rel_path, content)
+        buf.seek(0)
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "-", skill.name).strip("-") or "skill"
+        return send_file(buf, mimetype="application/zip", as_attachment=True,
+                          download_name=f"{safe_name}.zip")
 
     def _upsert_skill(name, description, repo_url, doc_url):
         skill = Skill.query.filter_by(name=name).first()
