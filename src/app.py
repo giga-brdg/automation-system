@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
-from . import github_sync, telegram
+from . import ai_usage, github_sync, telegram
 from .extensions import db, login_manager
 from .models import (
     Automation,
@@ -214,6 +214,10 @@ def register_routes(app):
             automation.owner_id = current_user.id
         automation.repo_url = form.get("repo_url", "").strip() or None
         automation.clickup_url = form.get("clickup_url", "").strip() or None
+        raw_usage_project_id = form.get("ai_usage_project_id", "").strip()
+        automation.ai_usage_project_id = int(raw_usage_project_id) if raw_usage_project_id.isdigit() else None
+        automation.monthly_token_budget_usd = form.get("monthly_token_budget_usd", "").strip() or None
+        automation.token_spike_multiplier = form.get("token_spike_multiplier", "").strip() or None
         automation.departments = Department.query.filter(
             Department.id.in_(form.getlist("departments"))).all()
         automation.skills = Skill.query.filter(Skill.id.in_(form.getlist("skills"))).all()
@@ -238,7 +242,8 @@ def register_routes(app):
             db.session.commit()
             return redirect(url_for("automation_detail", slug=automation.slug))
         return render_template("automation_form.html", departments=departments, skills=skills,
-                                users=users, statuses=Status, automation=None)
+                                users=users, statuses=Status, automation=None,
+                                default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT)
 
     @app.route("/automations/<slug>/edit", methods=["GET", "POST"])
     @login_required
@@ -254,7 +259,8 @@ def register_routes(app):
             db.session.commit()
             return redirect(url_for("automation_detail", slug=automation.slug))
         return render_template("automation_form.html", departments=departments, skills=skills,
-                                users=users, statuses=Status, automation=automation)
+                                users=users, statuses=Status, automation=automation,
+                                default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT)
 
     def sync_automation_from_github(automation, repo_url, owner_id, form_status, selected_dept_ids, slug=None):
         """Shared by the first-time import form and the per-automation
@@ -509,7 +515,8 @@ def register_routes(app):
     @login_required
     def automation_detail(slug):
         automation = Automation.query.filter_by(slug=slug).first_or_404()
-        return render_template("automation_detail.html", automation=automation)
+        usage_summary = ai_usage.get_usage_summary(automation) if automation.ai_usage_project_id else None
+        return render_template("automation_detail.html", automation=automation, usage_summary=usage_summary)
 
     @app.route("/departments")
     @login_required
@@ -868,6 +875,83 @@ def register_cli(app):
         db.session.execute(db.text("ALTER TABLE skill ADD COLUMN repo_url VARCHAR(500)"))
         db.session.commit()
         click.echo("Migrated: added repo_url column to skill.")
+
+    @app.cli.command("migrate-token-usage")
+    def migrate_token_usage():
+        """One-off schema migration for ai-usage-collector linkage + budget
+        fields on automation (see src/ai_usage.py, check-token-usage).
+        Introspects existing columns first, so it's safe to run more than
+        once."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("automation")}
+        statements = []
+        if "ai_usage_project_id" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN ai_usage_project_id INTEGER")
+        if "monthly_token_budget_usd" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN monthly_token_budget_usd NUMERIC(10,2)")
+        if "token_spike_multiplier" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN token_spike_multiplier NUMERIC(4,1)")
+        if "last_token_alert_kind" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN last_token_alert_kind VARCHAR(20)")
+        if "last_token_alert_at" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN last_token_alert_at TIMESTAMP")
+        if not statements:
+            click.echo("Already migrated - nothing to do.")
+            return
+        for stmt in statements:
+            db.session.execute(db.text(stmt))
+        db.session.commit()
+        click.echo(f"Migrated: added {len(statements)} column(s) to automation.")
+
+    @app.cli.command("check-token-usage")
+    def check_token_usage():
+        """One-shot budget/spike check against ai-usage-collector's data,
+        meant to be invoked by a Railway Cron Schedule on its own service
+        (see docs/token_usage_alerts_plan.md) - NOT run continuously.
+        Idempotent per threshold-cross via Automation.last_token_alert_kind/
+        _at. Must exit promptly: Railway skips the next scheduled cron run
+        if this one is still marked Active."""
+        admin_chat_id = os.environ.get("ADMIN_TELEGRAM_CHAT_ID")
+        checked = alerted = 0
+        automations = Automation.query.filter(Automation.ai_usage_project_id.isnot(None)).all()
+        for automation in automations:
+            status = ai_usage.get_budget_and_spike_status(automation)
+            if status is None:
+                continue
+            checked += 1
+            multiplier = float(automation.token_spike_multiplier or ai_usage.SPIKE_MULTIPLIER_DEFAULT)
+            kind, message = _evaluate_token_alert(automation, status, multiplier)
+            if kind and kind != automation.last_token_alert_kind:
+                if telegram.send_message(admin_chat_id, message):
+                    automation.last_token_alert_kind = kind
+                    automation.last_token_alert_at = _now()
+                    alerted += 1
+            elif kind is None and automation.last_token_alert_kind:
+                # Back under every threshold - clear so a future re-cross alerts again.
+                automation.last_token_alert_kind = None
+        db.session.commit()
+        click.echo(f"Checked {checked} automation(s), sent {alerted} alert(s).")
+
+    def _evaluate_token_alert(automation, status, multiplier):
+        """Priority: budget >=100% > budget >=80% > spike - a critical
+        budget breach matters more than a same-day spike. Returns
+        (kind, message) or (None, None)."""
+        if status["budget_usd"] and status["budget_pct"] is not None:
+            if status["budget_pct"] >= ai_usage.BUDGET_CRITICAL_THRESHOLD:
+                return "budget_100", (
+                    f"🔴 {automation.name}: витрачено ${status['month_spend_usd']:.2f} "
+                    f"з бюджету ${status['budget_usd']:.2f} цього місяця (100%+)."
+                )
+            if status["budget_pct"] >= ai_usage.BUDGET_WARN_THRESHOLD:
+                return "budget_80", (
+                    f"🟠 {automation.name}: витрачено ${status['month_spend_usd']:.2f} "
+                    f"з бюджету ${status['budget_usd']:.2f} цього місяця (80%+)."
+                )
+        if status["trailing_7d_avg_usd"] and status["today_spend_usd"] > multiplier * status["trailing_7d_avg_usd"]:
+            return "spike", (
+                f"⚡ {automation.name}: сьогоднішні витрати ${status['today_spend_usd']:.2f} "
+                f"у {multiplier}x+ вищі за середнє за 7 днів (${status['trailing_7d_avg_usd']:.2f})."
+            )
+        return None, None
 
     _SKILL_DESCRIPTIONS_UK = {
         "automation-portfolio-sync": "Перевіряє, чи репозиторій автоматизації готовий до синку з цим "

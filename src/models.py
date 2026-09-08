@@ -169,6 +169,23 @@ class Automation(db.Model):
     # anything a commit can't say - "очікуємо погодження", "заблоковано
     # тікетом X". Takes priority over last_commit_message when present.
     current_stage_override = db.Column(db.String(500))
+    # Manual "+"-style link to ai-usage-collector's own projects.id (a
+    # different system's Postgres - see src/ai_usage.py). No cross-DB FK is
+    # possible; this is a plain nullable int the automator looks up and types
+    # in themselves. Null means "not tracked here" - the token-usage panel
+    # and check-token-usage both skip the automation silently, not an error.
+    ai_usage_project_id = db.Column(db.Integer)
+    # Manually-set monthly USD budget - OpenAI's Usage API has no "remaining
+    # balance" concept, so this is the dashboard's own comparison point, not
+    # something read from OpenAI.
+    monthly_token_budget_usd = db.Column(db.Numeric(10, 2))
+    # Per-automation override of ai_usage.SPIKE_MULTIPLIER_DEFAULT. Null uses
+    # the default.
+    token_spike_multiplier = db.Column(db.Numeric(4, 1))
+    # De-dup state for check-token-usage so the same threshold-cross doesn't
+    # re-alert every cron run. One of "budget_80"/"budget_100"/"spike"/null.
+    last_token_alert_kind = db.Column(db.String(20))
+    last_token_alert_at = db.Column(db.DateTime)
 
     owner = db.relationship("User", back_populates="automations")
     departments = db.relationship("Department", secondary=automation_departments, backref="automations")

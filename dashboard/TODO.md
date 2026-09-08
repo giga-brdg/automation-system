@@ -20,3 +20,10 @@
   `automation-portfolio-sync`, деталі в `docs/telegram_alerts_plan.md` (фаза 2).
 - [ ] Показати останній збій автоматизації прямо на її картці в дашборді —
   `docs/telegram_alerts_plan.md` (фаза 3).
+- [x] Токен-бюджет і сплеск-алерти: підключення до Postgres ai-usage-collector,
+  поля прив'язки/бюджету на автоматизації, панель на сторінці деталей —
+  деталі в `docs/token_usage_alerts_plan.md` (фаза 1-2).
+- [ ] CLI-команда `check-token-usage` + Railway Cron Schedule на окремому
+  сервісі — `docs/token_usage_alerts_plan.md` (фаза 3, код готовий, сервіс
+  ще не створено в Railway). Реальних чисел не буде, доки в ai-usage-collector
+  не запрацює справжній синк і не зареєструють реальні автоматизації.

@@ -225,6 +225,35 @@
     </div>
     {% endif %}
 
+    {% if automation.ai_usage_project_id %}
+    <div class="panel">
+      <div class="panel-title sora">Токени</div>
+      {% if usage_summary is none %}
+      <div style="font-size:12.5px; color:var(--text-muted);">
+        Не вдалося отримати дані з ai-usage-collector (перевір AI_USAGE_DATABASE_URL).
+      </div>
+      {% elif not usage_summary.has_any_data %}
+      <div style="font-size:12.5px; color:var(--text-muted);">
+        Проєкт підключено (ID {{ automation.ai_usage_project_id }}), але даних про витрати ще немає.
+      </div>
+      {% else %}
+      <div style="font-size:13px;">
+        Цей місяць: <strong>${{ "%.2f"|format(usage_summary.month_spend_usd) }}</strong>
+        {% if usage_summary.budget_usd %} з ${{ "%.2f"|format(usage_summary.budget_usd) }}{% endif %}
+      </div>
+      {% if usage_summary.budget_pct is not none %}
+      <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+        {{ (usage_summary.budget_pct * 100)|round(0, 'floor')|int }}% бюджету
+      </div>
+      {% endif %}
+      <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
+        Сьогодні: ${{ "%.2f"|format(usage_summary.today_spend_usd) }} ·
+        Середнє за 7 днів: ${{ "%.2f"|format(usage_summary.trailing_7d_avg_usd) }}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <div class="panel">
       <div class="panel-title sora">Статус</div>
       <div style="display:flex; align-items:center; gap:8px;">
