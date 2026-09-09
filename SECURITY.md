@@ -69,16 +69,15 @@ older release line to backport to.
 ## Known Limitations
 Known gaps identified so far, grouped by component — not exhaustive, and not
 capped at one per component. A production-hardening pass (see the entries
-marked **Fixed** below) closed five of these; the rest are still open,
+marked **Fixed** below) closed six of these; the rest are still open,
 including one — the Telegram bot's chat-ID-only auth — that pass looked at
 and deliberately left as accepted risk rather than an oversight.
 
-**Required manual step for the `/confirm` fix below to actually be live**:
-`flask --app src.app migrate-confirm-attempts` still needs to be run against
-the production database (same "run this by hand against prod" pattern
-`DEPLOYMENT.md` already documents for `migrate-registration`/etc.) — until
-then, the code's `pending_code_attempts` column doesn't exist there yet and
-that route will error on the first wrong `/confirm` attempt in prod.
+`flask --app src.app migrate-confirm-attempts` (the `/confirm` fix's required
+manual step, below) **has been run against production** — confirmed live: a
+real registration through `/register` no longer 500s, and five wrong
+`/confirm` codes in a row correctly triggers the lockout message, both
+checked directly against the deployed app after the migration ran.
 
 - **Telegram bot** (`src/telegram_bot.py`): authorizes purely by the incoming
   message's chat ID matching `ADMIN_TELEGRAM_CHAT_ID` — the bot token itself
@@ -146,15 +145,24 @@ that route will error on the first wrong `/confirm` attempt in prod.
   repo). The code-level gap — no startup check enforcing this — is still
   open; today's safety is an operational fact about the current Railway
   config, not something the code itself guarantees going forward.
-- **Login/registration — rate limiting: `/confirm` fixed, `/login` still
-  open.** `/login` still has no lockout or throttle on failed password
-  attempts (no `flask-limiter` or equivalent is a dependency) — online
-  password guessing against a known/enumerable email remains unmitigated.
-  `/confirm` is fixed: the registration code is a 6-digit number valid for 30
-  minutes, and past 5 wrong attempts (`User.pending_code_attempts`) the code
-  is now invalidated outright, forcing a fresh `/register` for a new one,
-  rather than staying guessable for the rest of its 30-minute window. See the
-  required manual migration step noted at the top of this section.
+- **Login/registration — rate limiting — Fixed (both `/confirm` and
+  `/login`).** `/confirm`: the registration code is a 6-digit number valid
+  for 30 minutes, and past 5 wrong attempts (`User.pending_code_attempts`)
+  the code is now invalidated outright, forcing a fresh `/register` for a
+  new one, rather than staying guessable for the rest of its 30-minute
+  window. `/login`: online password guessing is now throttled via
+  Flask-Limiter — 10 `POST` attempts per minute per client IP (loading the
+  form itself, `GET`, is never limited). Getting the real client IP right
+  behind Railway's edge proxy needed `werkzeug`'s `ProxyFix`, trusting
+  exactly one `X-Forwarded-For` hop — applied only when `RAILWAY_ENVIRONMENT`
+  is set, so a local dev instance isn't trusting a header nothing real is
+  actually adding, which would otherwise let a local request spoof its rate-
+  limit identity. Storage is Flask-Limiter's in-memory backend, deliberately:
+  the live `web` service is confirmed single-instance (see `DEPLOYMENT.md`),
+  so there's no second process with its own separate counter to disagree
+  with — revisit (a shared store) only if that changes. A throttled request
+  gets a plain flash ("Забагато спроб входу — зачекай хвилину і спробуй ще
+  раз."), not a raw error page.
 - **Login/registration — no CSRF protection — Fixed.** Flask-WTF's
   `CSRFProtect` is now wired up app-wide (`src/app.py`); every state-changing
   form (`/automations/new`, `/automations/<slug>/edit`, department/skill

@@ -58,10 +58,15 @@
   само-обслуговування regenerate-ключа), IDOR на `/automators/<id>`
   (чужий email більше не видно) — деталі й що свідомо лишили як прийнятний
   ризик (Telegram-бот лише по chat_id) у `SECURITY.md`.
-- [ ] `flask --app src.app migrate-confirm-attempts` ще не запускали проти
-  прод-бази — без цього кроку захист `/confirm` від перебору впаде з
-  помилкою на першій же невірній спробі коду в проді.
+- [x] `flask --app src.app migrate-confirm-attempts` запущено проти прод-бази
+  через `railway ssh` (`railway run` не підійшов — `postgres.railway.internal`
+  резолвиться лише зсередини мережі Railway). Перевірено живим запитом:
+  реєстрація більше не падає з 500, п'ять невірних кодів на `/confirm`
+  коректно тригерять блокування.
+- [x] `/login` тепер теж має rate-limit — 10 POST-спроб на хвилину на
+  клієнта (Flask-Limiter), `ProxyFix` для правильного client IP за
+  Railway-проксі. Раніше захищений був лише `/confirm`.
 - [ ] Перший реальний тестовий набір (`tests/test_auth_security.py`,
-  17 тестів на pytest) покриває тільки авторизацію/реєстрацію — парсери
+  20 тестів на pytest) покриває тільки авторизацію/реєстрацію — парсери
   `github_sync.py`, гілки `sync_automation_from_github`, решта роутів і
   CLI-команд, E2E — усе ще без тестів. Деталі в `TESTING.md`.
