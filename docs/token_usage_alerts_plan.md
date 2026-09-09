@@ -109,8 +109,24 @@ can complete on their own.
 
 - Whether a 3-hour cron cadence is right once real data exists, or a
   same-day spike needs tighter checking.
-- Whether a live cross-DB dropdown for `ai_usage_project_id` (v2) is worth
-  building once more than a couple of automations are actually linked.
 - Whether the 80%/100% budget thresholds and 3x spike multiplier defaults
   need tuning — impossible to validate against real spend patterns today,
-  since none exist yet.
+  since none exist yet. Now configurable via env (`TOKEN_BUDGET_WARN_THRESHOLD`/
+  `TOKEN_BUDGET_CRITICAL_THRESHOLD`/`TOKEN_SPIKE_MULTIPLIER_DEFAULT`), so this
+  is purely a "pick better numbers later" question now, not a code change.
+- **Whether this should stay OpenAI-only.** The real need is tracking spend on
+  any metered API key an automation uses, not specifically "OpenAI vs.
+  Anthropic" — a Claude-API-billed automation has exactly the same blind spot
+  today that this whole plan was written to close for OpenAI. Whether that
+  means ai-usage-collector's own `ai_credentials` table can already hold a
+  non-OpenAI key (worth asking its owner, Stanislav, before assuming it
+  can't), or this repo needs a second, provider-specific integration
+  alongside `src/ai_usage.py`, is still open — not decided against, just not
+  investigated yet. Either way, attribution to one automation only works
+  when that automation has its own dedicated key — the provider's usage/cost
+  API reports spend per key (or per workspace), not per calling automation,
+  the same way `ai_usage.get_usage_summary` today only works because
+  `ai_credentials` is one OpenAI key per `projects` row, not one key shared
+  across several automations. A shared key across automations has nothing
+  to split the spend by; that's a real limit of the approach, not a bug to
+  fix in this repo's code.
