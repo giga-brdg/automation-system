@@ -22,10 +22,16 @@ def app():
     os.environ["DATABASE_URL"] = "sqlite:///" + db_path.replace("\\", "/")
     os.environ["AUTH_SECRET"] = "test-only-secret-do-not-use-in-prod"
 
-    from src.app import create_app
+    from src.app import create_app, limiter
     from src.extensions import db
 
     flask_app = create_app()
+    # The rate limiter's storage lives on the module-level `limiter` object,
+    # not per-Flask-app - every create_app() call across the whole test
+    # session shares the same in-memory counters otherwise, so an earlier
+    # test's /login attempts would silently eat into a later test's budget
+    # (or trip a 429 in a test that isn't even testing rate limiting).
+    limiter.storage.reset()
     with flask_app.app_context():
         db.create_all()
         yield flask_app

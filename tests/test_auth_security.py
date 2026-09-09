@@ -223,3 +223,70 @@ class TestSessionCookieFlags:
         monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
         prod_app = app_module.create_app()
         assert prod_app.config["SESSION_COOKIE_SECURE"] is True
+
+
+class TestLoginRateLimit:
+    def test_blocks_after_ten_attempts_per_minute(self, app, client):
+        with app.app_context():
+            _make_user("admin@x.com", "Admin", role=Role.ADMIN)
+        token = _csrf_token(client.get("/login").get_data(as_text=True))
+
+        statuses = []
+        for _ in range(11):
+            resp = client.post("/login", data={
+                "email": "admin@x.com", "password": "wrong-password", "csrf_token": token,
+            })
+            statuses.append(resp.status_code)
+
+        assert statuses[:10] == [200] * 10, "the first 10 attempts should each render normally (wrong password)"
+        assert statuses[10] == 429, "the 11th attempt within the window should be rate-limited"
+
+    def test_get_requests_are_never_rate_limited(self, app, client):
+        # Only POST counts against the limit - repeatedly loading the empty
+        # login form must never itself trigger a 429.
+        for _ in range(15):
+            resp = client.get("/login")
+            assert resp.status_code == 200
+
+    def test_a_real_client_ip_is_used_behind_the_proxy(self, app, monkeypatch):
+        """Without ProxyFix, every request behind Railway's edge would look
+        like it came from the same address (the proxy's own IP) - this
+        confirms X-Forwarded-For is actually trusted once RAILWAY_ENVIRONMENT
+        is set, so two different clients get two different rate-limit
+        buckets instead of sharing one. Depends on the `app` fixture (even
+        though it builds its own second app below) purely for the temp-file
+        DATABASE_URL it sets - without it, create_app() would default to the
+        real local data/portfolio.db."""
+        from src import app as app_module
+        from src.app import limiter
+        from src.extensions import db as prod_db
+
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+        prod_app = app_module.create_app()
+        limiter.storage.reset()
+        with prod_app.app_context():
+            prod_db.create_all()
+            _make_user("admin2@x.com", "Admin2", role=Role.ADMIN)
+
+        client = prod_app.test_client()
+        token = _csrf_token(client.get("/login").get_data(as_text=True))
+
+        # Exhaust the limit as client A.
+        for _ in range(10):
+            client.post("/login", data={"email": "admin2@x.com", "password": "wrong", "csrf_token": token},
+                        headers={"X-Forwarded-For": "203.0.113.10"})
+        blocked = client.post("/login", data={"email": "admin2@x.com", "password": "wrong", "csrf_token": token},
+                               headers={"X-Forwarded-For": "203.0.113.10"})
+        assert blocked.status_code == 429
+
+        # A different client (different forwarded IP) must not be blocked.
+        fresh = client.post("/login", data={"email": "admin2@x.com", "password": "wrong", "csrf_token": token},
+                             headers={"X-Forwarded-For": "203.0.113.99"})
+        assert fresh.status_code == 200
+
+        # This test's own second engine, same temp DB file as the `app`
+        # fixture - dispose it here or the fixture's teardown fails to
+        # unlink that file on Windows (same reason conftest.py disposes
+        # its own engine before unlinking).
+        with prod_app.app_context():
+            prod_db.engine.dispose()

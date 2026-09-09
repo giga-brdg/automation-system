@@ -10,9 +10,13 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask_limiter import Limiter
+from flask_limiter.errors import RateLimitExceeded
+from flask_limiter.util import get_remote_address
 from flask_login import current_user, login_required, login_user, logout_user
 from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import ai_usage, github_sync, telegram
 from .extensions import db, login_manager
@@ -43,6 +47,15 @@ load_dotenv(BASE_DIR / ".env")
 # Flask session/cookie to carry a CSRF token in the first place.
 csrf = CSRFProtect()
 
+# In-memory storage (the default) is fine here - confirmed via the live
+# Railway environment that `web` runs a single instance/replica, so there's
+# no second process with its own separate counter to disagree with. Revisit
+# (a shared store like Redis) only if that ever changes. No default_limits:
+# every route is unlimited except /login, which opts in explicitly below -
+# a blanket limit would also throttle things like the API-key sync endpoint
+# that have no brute-forceable secret to protect in the same way.
+limiter = Limiter(key_func=get_remote_address, default_limits=[], storage_uri="memory://")
+
 
 def create_app():
     app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -61,14 +74,29 @@ def create_app():
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 
+    if os.environ.get("RAILWAY_ENVIRONMENT"):
+        # Railway's own edge is the only reverse proxy in front of this app,
+        # so trusting exactly one X-Forwarded-For hop is safe - without this,
+        # request.remote_addr (what the rate limiter below keys on) sees only
+        # Railway's proxy IP, and every visitor would share one bucket.
+        # Skipped locally: nothing forwards a real client IP on a laptop, and
+        # trusting the header there would let a request just claim any IP.
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
+
     db.init_app(app)
     login_manager.init_app(app)
     csrf.init_app(app)
+    limiter.init_app(app)
 
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
         flash("Форма застаріла або сесія скінчилась — спробуй ще раз.")
         return redirect(request.referrer or url_for("index"))
+
+    @app.errorhandler(RateLimitExceeded)
+    def handle_rate_limit_error(e):
+        flash("Забагато спроб входу — зачекай хвилину і спробуй ще раз.")
+        return render_template("login.html"), 429
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -108,6 +136,7 @@ def register_routes(app):
         return redirect(url_for("automations_list"))
 
     @app.route("/login", methods=["GET", "POST"])
+    @limiter.limit("10 per minute", methods=["POST"])
     def login():
         if request.method == "POST":
             email = request.form.get("email", "").strip().lower()
