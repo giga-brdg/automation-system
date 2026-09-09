@@ -68,7 +68,17 @@ older release line to backport to.
 
 ## Known Limitations
 Known gaps identified so far, grouped by component — not exhaustive, and not
-capped at one per component:
+capped at one per component. A production-hardening pass (see the entries
+marked **Fixed** below) closed five of these; the rest are still open,
+including one — the Telegram bot's chat-ID-only auth — that pass looked at
+and deliberately left as accepted risk rather than an oversight.
+
+**Required manual step for the `/confirm` fix below to actually be live**:
+`flask --app src.app migrate-confirm-attempts` still needs to be run against
+the production database (same "run this by hand against prod" pattern
+`DEPLOYMENT.md` already documents for `migrate-registration`/etc.) — until
+then, the code's `pending_code_attempts` column doesn't exist there yet and
+that route will error on the first wrong `/confirm` attempt in prod.
 
 - **Telegram bot** (`src/telegram_bot.py`): authorizes purely by the incoming
   message's chat ID matching `ADMIN_TELEGRAM_CHAT_ID` — the bot token itself
@@ -83,7 +93,13 @@ capped at one per component:
   the entire app** to any account named in the command — a materially worse
   outcome than "compromises the approval flow," since it's not just approval
   gate bypass but a direct route to admin-level control of every automation,
-  user, department, and skill in the app.
+  user, department, and skill in the app. **Still open, deliberately**: the
+  production-hardening pass that fixed the entries below looked at this one
+  and left it as accepted risk rather than an oversight — a second factor
+  beyond "controls the actual Telegram chat" would need real added
+  infrastructure (a shared secret, a second approval channel) for a
+  solo/small-team admin flow, which was judged out of scope for that pass.
+  Revisit if the admin team grows beyond one or two trusted people.
 - **GitHub-sync** (`src/github_sync.py`): reads `GITHUB_TOKEN` (`.env`) to call
   the GitHub API on an authenticated Automator/Admin's supplied `repo_url`
   (`/automations/import-github`, `/automations/<slug>/resync` — see Scope
@@ -99,74 +115,74 @@ capped at one per component:
   rows; templates don't use Jinja's `|safe` on it (checked), so this isn't a
   known stored-XSS path today, but it hasn't been reviewed as untrusted input
   beyond that.
-- **Authorization model / IDOR**: this file scopes the login/registration
-  surface but doesn't otherwise describe who can do what once logged in —
-  three roles (`Role.ADMIN`/`AUTOMATOR`/`VIEWER`, `src/models.py`) gated by
-  `admin_required`/`automator_required`/`User.can_manage` (`src/app.py`).
-  Concretely, `/automators/<int:user_id>` (`src/app.py:544-548`) is gated only
-  by `@login_required` with no role check, and `automator_profile.html` prints
+- **Authorization model / IDOR — Fixed.** Three roles (`Role.ADMIN`/
+  `AUTOMATOR`/`VIEWER`, `src/models.py`) gated by `admin_required`/
+  `automator_required`/`User.can_manage` (`src/app.py`) describe who can do
+  what once logged in, but `/automators/<int:user_id>` was gated only by
+  `@login_required` with no role check, and `automator_profile.html` printed
   `automator.email` directly — so any authenticated user, including a
-  self-registered `VIEWER` (the account type `/register` produces by default),
-  can enumerate sequential user IDs and harvest every other user's name and
-  email. This is a live PII-disclosure path, and it directly feeds the
-  compliance question the Status section above raises about self-service
-  registration collecting employee personal data.
-- **Session cookie has no explicit transport flags**: nothing in `src/app.py`
-  sets `SESSION_COOKIE_SECURE`, `SESSION_COOKIE_HTTPONLY`, or
-  `SESSION_COOKIE_SAMESITE` (grep confirms none of the three are configured),
-  so Flask's defaults apply — notably `SESSION_COOKIE_SECURE` defaults to
-  `False`, meaning the cookie isn't marked HTTPS-only. That matters more now
-  that the Status section above says this login is reachable beyond the
-  corporate network; whether that's accepted risk or an overlooked gap isn't
-  documented anywhere in this repo.
-- **Login/registration** (`src/app.py`): `SECRET_KEY` (which signs the
-  Flask-Login session cookie) is set from `AUTH_SECRET`, but with a silent
-  fallback if that env var is missing — `app.config["SECRET_KEY"] =
-  os.environ.get("AUTH_SECRET") or "dev-only-insecure-key-set-AUTH_SECRET-in-.env"`
-  (line 42) — and no startup check refuses to run without `AUTH_SECRET` set. If
-  that fallback is ever what's actually running in prod, sessions are signed with
-  a hardcoded key visible in this repo's source, letting anyone forge a valid
-  session (login bypass / privilege escalation). This file cannot confirm from
-  the repo alone whether `AUTH_SECRET` is set in the live Railway environment —
-  verify it there.
-- **Login/registration — no rate limiting anywhere** (`src/app.py`,
-  `requirements.txt`): `/login` has no lockout or throttle on failed attempts
-  (no `flask-limiter` or equivalent is a dependency), so online password
-  guessing against a known/enumerable email is unmitigated. `/confirm` is
-  worse: the registration code is a 6-digit number
-  (`secrets.randbelow(1_000_000)`) valid for 30 minutes, and nothing counts or
-  throttles attempts against it — a 1,000,000-value space is brute-forceable
-  well inside that window, on the exact endpoint the Status section above
-  calls public attack surface.
-- **Login/registration — no CSRF protection** (`src/app.py`,
-  `requirements.txt`): no `flask-wtf`/CSRF token anywhere in the app.
-  State-changing POSTs that run under a logged-in session
-  (`/automations/new`, `/automations/<slug>/edit`, department/skill deletes)
-  rely on the session cookie alone.
-- **API-key sync endpoint** (`POST /api/automations/<slug>/sync`,
-  `src/app.py`): authenticated by a per-user `api_key` (`src/models.py:78`,
-  `secrets.token_hex(32)`) that never expires or rotates. This key is *not*
-  only issued by the admin-run `create_user` CLI: `api_key` is a column
-  default, so `/register`'s public, unauthenticated handler
-  (`user = existing or User(email=email, role=Role.VIEWER)`, `src/app.py:121`)
-  generates a live `api_key` for every self-registered account at signup time
-  — before `/confirm`, before Telegram `/grant`, before any admin action at
-  all. It sits dormant only because the sync endpoint also requires
-  `owner.role in (Role.ADMIN, Role.AUTOMATOR)` (line 569); a single
-  chat-ID-gated `/grant <email> automator` (`telegram_bot.py:49-65`) flips that
-  role without ever regenerating or displaying the key, silently activating a
-  credential the account already held. So this endpoint is one weakly-scoped
-  Telegram command away from the same public `/register` surface the Status
-  section above calls out as the real risk — not the fully separate,
-  admin-CLI-only surface the Scope section's phrasing above suggests.
-  Revocation is also narrower than it looks: `/revoke <email>`
-  (`telegram_bot.py:66-74`) only sets `is_approved = False`, and
-  `api_sync_automation` (`src/app.py:565-570`) never checks `is_approved` —
-  only `role` — so a revoked Automator/Admin's `api_key` keeps authenticating
-  against this endpoint after `/revoke`, even though the admin who ran it
-  would reasonably expect it to cut off all of that account's access. Treat
-  any `api_key` (CLI-printed or otherwise) the same as any other
-  credential, and don't assume `/revoke` invalidates it.
+  self-registered `VIEWER`, could enumerate sequential user IDs and harvest
+  every other user's email. `automator_profile.html` now only renders the
+  email when the viewer is an admin or viewing their own profile; the rest of
+  the page (name, role, automations list) is unchanged and still visible to
+  any logged-in user, since that part was never the actual PII leak. This was
+  the live path feeding the compliance question the Status section above
+  raises about self-service registration collecting employee personal data.
+- **Session cookie has no explicit transport flags — Fixed.**
+  `SESSION_COOKIE_HTTPONLY` and `SESSION_COOKIE_SAMESITE=Lax` are now always
+  set. `SESSION_COOKIE_SECURE` is tied to whether `RAILWAY_ENVIRONMENT` is
+  set (`True` in any real Railway deployment, `False` for a plain local
+  `python -m src.app` over http, which would otherwise never get the cookie
+  back) rather than hardcoded — confirmed via the live Railway environment
+  that `RAILWAY_ENVIRONMENT` is in fact set there today, so this resolves to
+  `True` in production, not just in theory.
+- **Login/registration — `AUTH_SECRET` fallback.** `SECRET_KEY` (which signs
+  the Flask-Login session cookie) is set from `AUTH_SECRET`, but with a
+  silent fallback to a hardcoded insecure key if that env var is missing —
+  no startup check refuses to run without it set. **Verified, not just
+  assumed**: the live Railway environment variable is in fact set to a real,
+  non-default value (confirmed directly against the deployed environment;
+  the value itself is deliberately not repeated here or anywhere else in this
+  repo). The code-level gap — no startup check enforcing this — is still
+  open; today's safety is an operational fact about the current Railway
+  config, not something the code itself guarantees going forward.
+- **Login/registration — rate limiting: `/confirm` fixed, `/login` still
+  open.** `/login` still has no lockout or throttle on failed password
+  attempts (no `flask-limiter` or equivalent is a dependency) — online
+  password guessing against a known/enumerable email remains unmitigated.
+  `/confirm` is fixed: the registration code is a 6-digit number valid for 30
+  minutes, and past 5 wrong attempts (`User.pending_code_attempts`) the code
+  is now invalidated outright, forcing a fresh `/register` for a new one,
+  rather than staying guessable for the rest of its 30-minute window. See the
+  required manual migration step noted at the top of this section.
+- **Login/registration — no CSRF protection — Fixed.** Flask-WTF's
+  `CSRFProtect` is now wired up app-wide (`src/app.py`); every state-changing
+  form (`/automations/new`, `/automations/<slug>/edit`, department/skill
+  actions, login/register/confirm, the API-key regenerate action) carries a
+  `csrf_token` field. The one deliberate exception is `POST
+  /api/automations/<slug>/sync`, explicitly exempted (`@csrf.exempt`) since
+  it's machine-facing (`X-API-Key` header auth, no Flask session to carry a
+  token in the first place) — that's a scoped exemption, not a gap.
+- **API-key sync endpoint — Fixed.** `POST /api/automations/<slug>/sync`
+  authenticates by a per-user `api_key` (`secrets.token_hex(32)`), and that
+  key was live from the moment of self-registration — before `/confirm`,
+  before Telegram `/grant`, before any admin action — sitting dormant only
+  because the endpoint also required `owner.role in (Role.ADMIN,
+  Role.AUTOMATOR)`; a single chat-ID-gated `/grant <email> automator` flipped
+  that role without ever regenerating or displaying the key, silently
+  activating a credential the account already held. `/grant` now rotates
+  `api_key` and relays the new value in its Telegram reply (only for
+  `automator`/`admin` — a `viewer`'s key is inert regardless, no need to
+  surface it). Revocation was also narrower than it looked: `/revoke` only
+  ever set `is_approved = False`, and this endpoint never checked that flag —
+  only `role` — so a revoked Automator/Admin's key kept authenticating after
+  `/revoke`. The endpoint now also requires `owner.is_approved`, and
+  `/revoke` rotates `api_key` too as defense in depth. Separately, a
+  self-registered Automator/Admin who never went through the admin-run
+  `create_user` CLI had no way to ever actually see their own key — a new
+  self-service `POST /automators/<id>/regenerate-api-key` route (strictly
+  self-only, `403` otherwise) shows a freshly generated key once via flash,
+  the same one-time-display convention `create_user` already used.
 
 ## Reporting a Vulnerability
 Report directly to the project owner. No name or contact is recorded in this repo

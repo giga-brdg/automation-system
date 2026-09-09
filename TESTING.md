@@ -90,26 +90,36 @@ exists, not either stale premise:
   Integration does, or treat the admin-approval half as a manual check
   rather than a true automated E2E step.
 
-Candidate frameworks: `pytest` (+ `pytest-flask`) for unit/integration,
-Playwright for end-to-end (it drives a running server over HTTP, independent
-of the server-side template stack) — not yet confirmed, decide before writing
-the first test. Neither is in `requirements.txt` yet; adding it and
-`pip install`-ing it is part of that decision, not a separate later step.
+**Framework: `pytest`**, decided and wired up (`requirements.txt`, `tests/`) —
+plain `pytest`, no `pytest-flask`. Fixture/teardown mechanics for the
+disposable database (`tests/conftest.py`): a **temp-file SQLite DB per test**,
+not `:memory:` — a plain SQLAlchemy engine opens a new connection per
+checkout, and `:memory:` doesn't survive that across requests without extra
+pooling config a temp file avoids needing. The `app` fixture sets
+`DATABASE_URL`/`AUTH_SECRET` before importing/calling `create_app()`
+(the ordering requirement two paragraphs up), yields the app inside an
+app context after `db.create_all()`, then disposes the engine before
+unlinking the file — Windows keeps a file handle open through the engine's
+connection pool even after `db.session.remove()`, so skipping the dispose
+step fails the temp file's cleanup with a `PermissionError` on that platform.
 
-Deciding the exact fixture/teardown mechanics for that disposable database
-(temp file vs. `:memory:`, per-test vs. per-run) is part of the same
-decision as the framework choice above — see the Integration bullet for the
-underlying fact (SQLite, no Postgres server needed); not repeated here.
+End-to-end still has no framework decision — Playwright (drives a running
+server over HTTP, independent of the server-side template stack) remains
+the candidate, not yet confirmed or added to `requirements.txt`. Nothing in
+`tests/` today is E2E; see What's Not Covered Yet.
 
 ## How to Run
-No test command exists yet — this is the gap to close, not a placeholder for a
-future codebase: `src/` is real, working, and already deployed (`dashboard/
-SUMMARY.md` status: live), it simply has zero automated tests today. Fill this
-in with the actual run command once the framework above is chosen and wired
-up; new test files belong in `tests/` (`tests/README.md` already names this
-section as its pair).
+```
+pytest
+```
+from the repo root runs everything in `tests/` (`tests/README.md` names this as
+its pair). No config flags needed — `pytest.ini`/`pyproject.toml` settings
+aren't required for the current suite (`tests/conftest.py` handles its own
+database setup per test via fixtures, described above).
 
-Until then, the only way to verify a change is manual: follow root
+This covers the auth/registration surface (see What's Not Covered Yet for what
+it doesn't). For anything outside that — a UI change, a GitHub-sync edit, a
+CLI command — the only way to verify is still manual: follow root
 `README.md`'s "Install" and "Usage" sections to get a local copy running
 (`python -m src.app` for the web app, plus `python -m src.telegram_bot` in a
 second process — registration approval needs both). Don't use `src/README.md`
@@ -143,30 +153,41 @@ view (a fresh instance otherwise has zero automations). Then click through
 login, registration, and the registry/ROI views by hand.
 
 ## Coverage
-No coverage tooling or target exists yet — there are no tests to measure. Once a
-framework is chosen, decide a target rather than assuming "some tests" already
-implies a coverage practice.
+No coverage tooling or numeric target exists yet — 17 tests exist
+(`tests/test_auth_security.py`) but nothing measures what fraction of the
+codebase they actually exercise. Once a target is decided, it should account
+for the fact that coverage today is concentrated on one surface (auth), not
+spread evenly - see What's Not Covered Yet.
 
 ## What's Not Covered Yet
-Nothing is covered yet — this is a bootstrap-time doc, no tests exist. That's a
-different risk than "no code exists yet": the live app already serves login
-and self-service registration reachable by anyone who hits `/register`, not
-just Supplax employees — access is gated by admin approval *after* signup,
-not by who can submit a request in the first place. `SECURITY.md`'s Status
-section is explicit that this makes `/register` public attack surface, and
-retracts an earlier "audience stays internal-only" framing as stale for the
-same reason (`dashboard/SUMMARY.md` agrees: "Завести акаунт може будь-хто" —
-anyone can create an account). With zero automated coverage today on exactly
-that surface, closing this gap is a near-term priority, not a
-someday-bootstrap item. That's a different axis than the Strategy section's
-"cheapest to cover well" framing for the markdown parsers above: this is
-about risk (public, unauthenticated attack surface with no coverage at all),
-that was about cost (pure functions, zero mocking). If only one thing gets
-tests first, write registration/`/register` tests first — the parsers are
-cheaper, not more urgent.
+**Now covered** (`tests/test_auth_security.py`, 17 tests, added in the
+production-hardening pass that also fixed each of these): CSRF protection on
+every POST route, `/confirm`'s brute-force lockout (5 wrong attempts
+invalidates the code), `api_key` rotation on `/grant`/`/revoke` and the
+self-service regenerate route, the `/automators/<id>` email-disclosure fix,
+and `POST /api/automations/<slug>/sync`'s `is_approved` check (plus its CSRF
+exemption). This was the single highest-risk gap this section used to flag —
+the live app's public, unauthenticated `/register` surface had zero automated
+coverage — so it's what got covered first, per this section's own
+previously-stated priority.
 
-CI is not wired up yet either (see `PIPELINE.md` §7): once a real test command
-exists, CI should require it to pass before merge — the project's stated v1
+**Still not covered, and genuinely still a gap:**
+- `src/github_sync.py`'s markdown-parsing functions (`parse_readme`,
+  `parse_markdown_sections`, `summary_fields_from_sections`, `parse_skill_md`,
+  etc.) — the Strategy section's "cheapest to cover well" candidates, zero
+  mocking needed, still untested.
+- `sync_automation_from_github`'s branch logic (clear-vs-preserve on re-sync)
+  and the GitHub-sync/Telegram network-facing code paths generally (need the
+  `unittest.mock` fakes the Strategy section describes).
+- Every route outside the auth surface above: automation CRUD, skills
+  library, departments, the token-usage panel/CLI, GitHub import/resync.
+- The Flask CLI commands beyond what the auth tests exercise indirectly
+  (`init-db`, `create-user`, `seed-demo`, `migrate-*`, `check-token-usage`).
+- End-to-end flows (no Playwright, or any E2E tooling, added yet).
+
+CI is not wired up yet either (see `PIPELINE.md` §7) — a real test command
+(`pytest`) exists now, but nothing runs it automatically before merge. CI
+should require it to pass — the project's stated v1
 priority is long-term maintainability over shipping fast, which favors a
 blocking gate over an advisory one. Note that a pass/fail gate alone only
 enforces that tests exist and pass, not their depth — deciding the (still

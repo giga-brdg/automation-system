@@ -32,24 +32,25 @@ command lives in Railway's project settings, not in git:
 - **Database**: `DATABASE_URL` selects Postgres (`psycopg2-binary` is pinned for
   this); unset, it falls back to a local SQLite file (`data/portfolio.db`) — see
   `.env.example`, which frames SQLite as the default and Postgres as something to
-  switch to "only if concurrent writes become a real problem." Nothing in this
-  repo actually confirms which one prod is running — no `DATABASE_URL` value is
-  recorded anywhere, so don't take "Postgres in prod" as settled without checking
-  the live Railway service's variables. **If prod is in fact still on the SQLite
-  default, this matters a lot**: `data/portfolio.db` is git-ignored (`.gitignore`
-  line 25) and lives inside the app's own container. Railway's container
-  filesystem is ephemeral — unless a persistent volume is explicitly attached
-  (nothing in this repo or `infra/README.md` mentions one), every redeploy can
-  silently wipe all users, automations, and ROI data with no warning. This
-  repo also doesn't record how many instances/replicas the Railway service
-  runs — if it's more than one, that compounds the same risk a second way
-  (concurrent writers to two divergent local SQLite files, not just one file
-  disappearing on redeploy), so instance count is one more unconfirmed
-  variable here, not just the volume question. There is
+  switch to "only if concurrent writes become a real problem." **Confirmed**
+  (checked directly against the live Railway project, not inferred): prod runs a
+  dedicated `Postgres` service, and the `web` service's `DATABASE_URL` points at
+  it over Railway's private network — not the SQLite fallback. This resolves
+  what used to be this section's biggest open risk: `data/portfolio.db` being
+  git-ignored and living inside the app's own (ephemeral) container would have
+  meant every redeploy could silently wipe all users, automations, and ROI data;
+  that doesn't apply here, since prod was never on that fallback. Instance
+  count is also confirmed low-risk: the `web` service runs a single active
+  deployment/replica, so even a hypothetical SQLite scenario wouldn't have had
+  the second failure mode (concurrent writers to divergent local files). There is
   also no migration framework (no Alembic/Flask-Migrate): schema is created/
   updated by hand via custom Flask CLI commands in `src/app.py` (`flask init-db`
-  for a fresh DB, `flask migrate-registration` for the registration-feature
-  columns). A from-scratch or restored DB also has no login path until someone
+  for a fresh DB; `flask migrate-registration`, `flask migrate-skill-repo-url`,
+  `flask migrate-token-usage`, and `flask migrate-confirm-attempts` for
+  feature-specific columns added since — the last of these, for `/confirm`'s
+  brute-force lockout, has **not yet been run against the production
+  database** as of this writing, see `SECURITY.md`'s Known Limitations for
+  what breaks until it is). A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without
   this step `init-db`/`migrate-registration` alone leave nobody able to log in
@@ -102,31 +103,36 @@ command lives in Railway's project settings, not in git:
 - **`src/telegram_bot.py` runs as a separate long-lived process** (polling, not a
   webhook) that must be deployed and kept running alongside the web process —
   shipping only the web app leaves registration approval dead with no error shown
-  to the person trying to register. **How that process actually runs on Railway
-  today is not documented anywhere in this repo**: there's no `Procfile`, no
-  second-service config, no supervisor setup, and the only run command on record
-  (`python -m src.telegram_bot`, from `README.md`) is written for local dev. This
-  repo cannot say whether prod runs it as a second Railway service, a worker
-  process, or isn't running it at all — treat that as unconfirmed, not as "yes,
-  it's up."
+  to the person trying to register. **Confirmed** (checked directly against
+  the live Railway project): it runs as its own dedicated Railway service
+  (named `bot`), separate from `web`, currently in a healthy `SUCCESS`
+  deployment state — not a worker process, not left un-deployed. There's
+  still no `Procfile`/second-service config *in this repo* recording that,
+  so this fact lives in Railway's project settings, not in git — worth
+  writing down here precisely because git can't show it.
+- **Confirmed project identity and URL**: this is the `Automation Dashboard`
+  project (workspace `giga-brdg`), reachable at
+  `web-production-c6a51.up.railway.app` — Railway's default subdomain, no
+  custom domain attached. Previously nothing in this repo recorded either, so
+  a newcomer had no way to even locate the deployment; both are now settled.
+  The project also runs a `token-usage-cron` service (`check-token-usage`,
+  see `docs/token_usage_alerts_plan.md`) and its own `Postgres` — both
+  confirmed live alongside `web` and `bot`.
 - **Still genuinely undecided / undocumented**: a real IaC setup for
   `infra/staging`/`infra/prod`; the actual deploy trigger (push-to-`main`
   auto-deploy via Railway's GitHub integration vs. `railway up` vs. a manual
   dashboard click — nothing in this repo says which, see the Rollout Strategy
-  hedge below); how `telegram_bot.py` is kept running on Railway (previous
-  bullet); which Python version Railway's build actually resolves to (previous
-  bullet); whether `gunicorn` (pinned in `requirements.txt`) is actually what
-  Railway invokes as the start command, as opposed to just being installed
-  (Stack bullet above); whether prod is reachable only through Railway's
-  default subdomain or through a custom domain with its own DNS/TLS setup —
-  nothing here names either; and which Railway project/workspace this even is — no project name,
-  team, or invite process is written down anywhere in this repo, so a newcomer
-  following this doc has no way to locate the actual deployment to look at its
-  logs or settings without asking someone directly. (One thing that's *not*
-  undecided, just unbuilt: there is no CI step ahead of a deploy, confirmed by
-  `PIPELINE.md` §7 — no test command exists yet, so a deploy today is not
-  blocked on tests passing. That's a settled fact about the current state, not
-  an open question.)
+  hedge below); which Python version Railway's build actually resolves to
+  (`RAILPACK_PYTHON_VERSION` is set on the live service, but that's a Railway
+  project setting, not something pinned in this repo's own files — a
+  from-scratch deploy elsewhere still has nothing here to pin it); whether
+  `gunicorn` (pinned in `requirements.txt`) is actually what Railway invokes
+  as the start command, as opposed to just being installed (Stack bullet
+  above). (One thing that's *not* undecided, just unbuilt: there is no CI
+  step ahead of a deploy, confirmed by `PIPELINE.md` §7 — a real test command
+  now exists (`pytest`, see `TESTING.md`), but nothing runs it automatically,
+  so a deploy today is still not blocked on tests passing. That's a settled
+  fact about the current state, not an open question.)
 
 ## Rollout Strategy
 Assumed direct deploy: whatever the actual trigger turns out to be (see "still
@@ -183,10 +189,12 @@ schema change, also confirm the matching `flask migrate-registration`-style
 command was actually run against the prod DB; nothing else in this doc's
 process re-checks that it was.
 
-**Caveat carried over from Deploy Steps**: none of this is as one-click as the
-list above makes it sound. This repo doesn't record the production URL, or the
-Railway project/service name, anywhere — so "confirm `/login` responds" and
-"check the app's Railway logs" both assume you already know where prod lives,
-which (per the workspace-identity gap noted above) you can't get from this repo
-alone. Treat these as the right checks to run once you have that access, not as
-steps a stranger can follow unaided from this doc.
+**Caveat carried over from Deploy Steps, now partly resolved**: this used to say
+none of this was as one-click as the list above sounds, since neither the
+production URL nor the Railway project/service name were recorded anywhere.
+Both now are (see Deploy Steps' "Confirmed project identity and URL" bullet):
+`/login` is reachable at `web-production-c6a51.up.railway.app`, and the
+project is `Automation Dashboard` under the `giga-brdg` workspace. What's
+still not written down here is *access* to that workspace itself — reaching
+its logs/settings/variables still means already having (or being granted)
+Railway access to that project, which this doc can't grant on its own.
