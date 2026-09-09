@@ -57,9 +57,28 @@
   <label>Посилання на задачу в ClickUp (необов'язково)
     <input type="url" name="clickup_url" value="{{ automation.clickup_url if automation else '' }}">
   </label>
-  <label>ID проєкту в ai-usage-collector (необов'язково, для трекінгу токенів)
+  <label>Проєкт в ai-usage-collector (необов'язково, для трекінгу токенів)
+    {% if ai_usage_projects %}
+    <select name="ai_usage_project_id">
+      <option value="">— не прив'язано —</option>
+      {% set linked_ids = ai_usage_projects|map(attribute='id')|list %}
+      {% if automation and automation.ai_usage_project_id and automation.ai_usage_project_id not in linked_ids %}
+      <option value="{{ automation.ai_usage_project_id }}" selected>
+        ID {{ automation.ai_usage_project_id }} (більше не видно в ai-usage-collector)
+      </option>
+      {% endif %}
+      {% for p in ai_usage_projects %}
+      <option value="{{ p.id }}" {% if automation and automation.ai_usage_project_id == p.id %}selected{% endif %}>
+        {{ p.name }} (ID {{ p.id }})
+      </option>
+      {% endfor %}
+    </select>
+    {% else %}
     <input type="number" name="ai_usage_project_id" min="1"
-           value="{{ automation.ai_usage_project_id if automation and automation.ai_usage_project_id else '' }}">
+           value="{{ automation.ai_usage_project_id if automation and automation.ai_usage_project_id else '' }}"
+           placeholder="ID вручну — ai-usage-collector зараз недоступний">
+    <span class="page-subtitle" style="margin:0;">Не вдалося отримати живий список проєктів — впиши ID вручну.</span>
+    {% endif %}
   </label>
   <label>Місячний бюджет на токени, $ (необов'язково)
     <input type="number" step="0.01" min="0" name="monthly_token_budget_usd"

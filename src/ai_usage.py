@@ -16,9 +16,16 @@ from datetime import date, timedelta
 import psycopg2
 import psycopg2.extras
 
-SPIKE_MULTIPLIER_DEFAULT = 3.0
-BUDGET_WARN_THRESHOLD = 0.8
-BUDGET_CRITICAL_THRESHOLD = 1.0
+# Tunable without a redeploy - these were picked "by eye" before any real
+# spend history existed (see docs/token_usage_alerts_plan.md's Open
+# questions); once real patterns show up, adjust via env instead of a code
+# change and a release. `or` rather than os.environ.get's own default arg,
+# same reason as DATABASE_URL's own fallback in src/app.py - .env.example
+# ships these present but blank, and get()'s default only kicks in when the
+# key is missing entirely, not when it's set to an empty string.
+SPIKE_MULTIPLIER_DEFAULT = float(os.environ.get("TOKEN_SPIKE_MULTIPLIER_DEFAULT") or "3.0")
+BUDGET_WARN_THRESHOLD = float(os.environ.get("TOKEN_BUDGET_WARN_THRESHOLD") or "0.8")
+BUDGET_CRITICAL_THRESHOLD = float(os.environ.get("TOKEN_BUDGET_CRITICAL_THRESHOLD") or "1.0")
 
 
 @contextmanager
@@ -95,6 +102,21 @@ def _summarize(conn, project_id, budget_usd):
         "today_spend_usd": today_spend,
         "has_any_data": row["row_count"] > 0,
     }
+
+
+def list_projects():
+    """The full {id, name} list from ai-usage-collector's own `projects`
+    table - lets the automation form offer a live dropdown instead of a
+    plain number someone has to go look up by hand. Returns [] (not None)
+    when AI_USAGE_DATABASE_URL is unset or the DB is unreachable, so the
+    form can fall back to a manual field instead of rendering an empty
+    dropdown that silently can't be used."""
+    with _connect() as conn:
+        if conn is None:
+            return []
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT id, name FROM projects ORDER BY name")
+            return [{"id": row["id"], "name": row["name"]} for row in cur.fetchall()]
 
 
 def get_usage_summary(automation):

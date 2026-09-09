@@ -218,6 +218,19 @@ def register_routes(app):
         automation.ai_usage_project_id = int(raw_usage_project_id) if raw_usage_project_id.isdigit() else None
         automation.monthly_token_budget_usd = form.get("monthly_token_budget_usd", "").strip() or None
         automation.token_spike_multiplier = form.get("token_spike_multiplier", "").strip() or None
+        if automation.ai_usage_project_id is not None:
+            # Nothing stops two cards pointing at the same ai-usage-collector
+            # project (a shared OpenAI key is a real setup) - not blocked,
+            # but worth a heads-up since both cards will then show/alert on
+            # the exact same spend as if it were each one's own.
+            dupe = Automation.query.filter(
+                Automation.ai_usage_project_id == automation.ai_usage_project_id,
+                Automation.id != automation.id,
+            ).first()
+            if dupe:
+                flash(f"Увага: project ID {automation.ai_usage_project_id} в ai-usage-collector вже "
+                      f"прив'язаний до «{dupe.name}» — витрати й алерти по бюджету рахуватимуться "
+                      f"однаково для обох карток.")
         automation.departments = Department.query.filter(
             Department.id.in_(form.getlist("departments"))).all()
         automation.skills = Skill.query.filter(Skill.id.in_(form.getlist("skills"))).all()
@@ -243,7 +256,8 @@ def register_routes(app):
             return redirect(url_for("automation_detail", slug=automation.slug))
         return render_template("automation_form.html", departments=departments, skills=skills,
                                 users=users, statuses=Status, automation=None,
-                                default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT)
+                                default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
+                                ai_usage_projects=ai_usage.list_projects())
 
     @app.route("/automations/<slug>/edit", methods=["GET", "POST"])
     @login_required
@@ -260,7 +274,8 @@ def register_routes(app):
             return redirect(url_for("automation_detail", slug=automation.slug))
         return render_template("automation_form.html", departments=departments, skills=skills,
                                 users=users, statuses=Status, automation=automation,
-                                default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT)
+                                default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
+                                ai_usage_projects=ai_usage.list_projects())
 
     def sync_automation_from_github(automation, repo_url, owner_id, form_status, selected_dept_ids, slug=None):
         """Shared by the first-time import form and the per-automation
@@ -932,9 +947,14 @@ def register_cli(app):
         click.echo(f"Checked {checked} automation(s), sent {alerted} alert(s).")
 
     def _evaluate_token_alert(automation, status, multiplier):
-        """Priority: budget >=100% > budget >=80% > spike - a critical
-        budget breach matters more than a same-day spike. Returns
-        (kind, message) or (None, None)."""
+        """Priority: budget >=100% > budget >=80% > spike > no budget set -
+        a critical budget breach matters more than a same-day spike, and a
+        same-day spike is a more urgent signal than the fact that nobody
+        set a budget at all. That last one only fires once (dedup'd like
+        every other kind via last_token_alert_kind) and only when there's
+        real spend to warn about - a linked-but-silent project with zero
+        spend has nothing to nudge anyone about yet. Returns (kind,
+        message) or (None, None)."""
         if status["budget_usd"] and status["budget_pct"] is not None:
             if status["budget_pct"] >= ai_usage.BUDGET_CRITICAL_THRESHOLD:
                 return "budget_100", (
@@ -950,6 +970,12 @@ def register_cli(app):
             return "spike", (
                 f"⚡ {automation.name}: сьогоднішні витрати ${status['today_spend_usd']:.2f} "
                 f"у {multiplier}x+ вищі за середнє за 7 днів (${status['trailing_7d_avg_usd']:.2f})."
+            )
+        if not status["budget_usd"] and status["has_any_data"] and status["month_spend_usd"] > 0:
+            return "no_budget", (
+                f"ℹ️ {automation.name}: витрачено ${status['month_spend_usd']:.2f} цього місяця, "
+                f"але місячний бюджет не задано — алерти по бюджету для цієї автоматизації не спрацюють, "
+                f"доки його не вказати на формі."
             )
         return None, None
 

@@ -245,6 +245,10 @@
       <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">
         {{ (usage_summary.budget_pct * 100)|round(0, 'floor')|int }}% бюджету
       </div>
+      {% elif usage_summary.month_spend_usd > 0 %}
+      <div style="font-size:11px; color:var(--accent-ink); margin-top:4px;">
+        Бюджет не задано — редагуй картку, щоб алерти по бюджету запрацювали.
+      </div>
       {% endif %}
       <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
         Сьогодні: ${{ "%.2f"|format(usage_summary.today_spend_usd) }} ·
