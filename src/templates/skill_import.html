@@ -9,6 +9,7 @@
   імпортує одразу всі скіли з підпапок цієї папки.
 </div>
 <form method="post" class="form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label>Посилання на репозиторій або папку
     <input type="url" name="repo_url" required
            placeholder="https://github.com/owner/skill-repo або .../tree/master/.claude/skills">

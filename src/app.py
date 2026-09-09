@@ -11,6 +11,8 @@ import click
 from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError
 
 from . import ai_usage, github_sync, telegram
 from .extensions import db, login_manager
@@ -35,6 +37,12 @@ from .models import (
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+# Module-level so register_routes (below) can reach it to exempt the one
+# machine-facing, non-session endpoint (api_sync_automation) - CSRFProtect
+# otherwise checks every POST/PUT/PATCH/DELETE, and that endpoint has no
+# Flask session/cookie to carry a CSRF token in the first place.
+csrf = CSRFProtect()
+
 
 def create_app():
     app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -43,9 +51,24 @@ def create_app():
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL") or default_db
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = os.environ.get("AUTH_SECRET") or "dev-only-insecure-key-set-AUTH_SECRET-in-.env"
+    # HTTPONLY/SAMESITE are safe everywhere (including local http dev); SECURE
+    # is tied to RAILWAY_ENVIRONMENT rather than hardcoded True so a plain
+    # local `python -m src.app` over http still gets a cookie the browser
+    # will actually send back - Railway sets this var in every deployed
+    # environment (confirmed: RAILWAY_ENVIRONMENT=production today), so this
+    # isn't guessing at how to detect "real deployment" vs. a laptop.
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
 
     db.init_app(app)
     login_manager.init_app(app)
+    csrf.init_app(app)
+
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(e):
+        flash("Форма застаріла або сесія скінчилась — спробуй ще раз.")
+        return redirect(request.referrer or url_for("index"))
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -126,6 +149,7 @@ def register_routes(app):
             user.set_password(password)
             user.pending_code = f"{secrets.randbelow(1_000_000):06d}"
             user.pending_code_expires_at = _now().replace(tzinfo=None) + timedelta(minutes=30)
+            user.pending_code_attempts = 0
             if existing is None:
                 db.session.add(user)
             db.session.commit()
@@ -145,6 +169,8 @@ def register_routes(app):
             return redirect(url_for("confirm", email=email))
         return render_template("register.html")
 
+    MAX_CONFIRM_ATTEMPTS = 5
+
     @app.route("/confirm", methods=["GET", "POST"])
     def confirm():
         email = request.values.get("email", "").strip().lower()
@@ -156,11 +182,26 @@ def register_routes(app):
             elif user.pending_code_expires_at and user.pending_code_expires_at < _now().replace(tzinfo=None):
                 flash("Код застарів — попроси адміністратора зареєструвати тебе ще раз.")
             elif code != user.pending_code:
-                flash("Невірний код.")
+                # A 6-digit code has only a million possible values - without
+                # this, nothing stops guessing all of them inside the
+                # 30-minute window. Past the threshold, invalidate the code
+                # outright rather than just keep counting: the only way
+                # forward is a fresh /register, which issues a new code and
+                # resets this counter.
+                user.pending_code_attempts += 1
+                if user.pending_code_attempts >= MAX_CONFIRM_ATTEMPTS:
+                    user.pending_code = None
+                    user.pending_code_expires_at = None
+                    db.session.commit()
+                    flash("Забагато невірних спроб — код анульовано. Зареєструйся ще раз, щоб отримати новий.")
+                else:
+                    db.session.commit()
+                    flash("Невірний код.")
             else:
                 user.is_confirmed = True
                 user.pending_code = None
                 user.pending_code_expires_at = None
+                user.pending_code_attempts = 0
                 db.session.commit()
                 flash("Акаунт підтверджено. Очікуй, поки адміністратор надасть доступ у Telegram-боті.")
                 return redirect(url_for("login"))
@@ -592,6 +633,22 @@ def register_routes(app):
         automator = User.query.get_or_404(user_id)
         return render_template("automator_profile.html", automator=automator)
 
+    @app.route("/automators/<int:user_id>/regenerate-api-key", methods=["POST"])
+    @login_required
+    def regenerate_api_key(user_id):
+        """Self-service only - there's no admin override here on purpose.
+        A self-registered Automator/Admin never sees their api_key at all
+        otherwise (create-user's CLI is the only place that ever prints one);
+        this also doubles as the way to invalidate a copy that might have
+        leaked, since the old key stops working the moment a new one is
+        generated."""
+        if current_user.id != user_id:
+            abort(403)
+        current_user.api_key = secrets.token_hex(32)
+        db.session.commit()
+        flash(f"Новий API-ключ: {current_user.api_key} — збережи його зараз, більше він ніде не покажеться.")
+        return redirect(url_for("automator_profile", user_id=user_id))
+
     @app.route("/skills")
     @login_required
     def skills_library():
@@ -753,6 +810,7 @@ def register_routes(app):
         return render_template("skill_import.html")
 
     @app.route("/api/automations/<slug>/sync", methods=["POST"])
+    @csrf.exempt  # machine-facing, X-API-Key auth - no Flask session to carry a CSRF token
     def api_sync_automation(slug):
         """Machine-facing endpoint for stage-0-supplax's portfolio-sync step to
         push a full automation record after a build finishes, authenticated by
@@ -765,7 +823,13 @@ def register_routes(app):
         owner = User.query.filter_by(api_key=api_key).first() if api_key else None
         if not owner:
             return jsonify({"error": "invalid or missing X-API-Key"}), 401
-        if owner.role not in (Role.ADMIN, Role.AUTOMATOR):
+        # is_approved, not just role: /revoke (src/telegram_bot.py) only ever
+        # flips is_approved off, and a self-registered account already holds
+        # a live api_key from the moment it signs up (User.api_key's column
+        # default), long before any admin approval - checking role alone
+        # would let a revoked Automator/Admin, or a never-approved
+        # self-registration, keep pushing through this endpoint regardless.
+        if owner.role not in (Role.ADMIN, Role.AUTOMATOR) or not owner.is_approved:
             return jsonify({"error": "this account isn't allowed to create or manage automations"}), 403
 
         payload = request.get_json(silent=True) or {}
@@ -877,6 +941,19 @@ def register_cli(app):
             db.session.execute(db.text(stmt))
         db.session.commit()
         click.echo(f"Migrated: added {len(statements)} column(s) to user.")
+
+    @app.cli.command("migrate-confirm-attempts")
+    def migrate_confirm_attempts():
+        """One-off schema migration for /confirm's brute-force guard - adds
+        user.pending_code_attempts. Introspects existing columns first, so
+        it's safe to run more than once."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("user")}
+        if "pending_code_attempts" in existing_cols:
+            click.echo("Already migrated - nothing to do.")
+            return
+        db.session.execute(db.text('ALTER TABLE "user" ADD COLUMN pending_code_attempts INTEGER NOT NULL DEFAULT 0'))
+        db.session.commit()
+        click.echo("Migrated: added pending_code_attempts column to user.")
 
     @app.cli.command("migrate-skill-repo-url")
     def migrate_skill_repo_url():

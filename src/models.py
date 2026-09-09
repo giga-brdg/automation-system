@@ -89,6 +89,12 @@ class User(UserMixin, db.Model):
     is_approved = db.Column(db.Boolean, nullable=False, default=False)
     pending_code = db.Column(db.String(10))
     pending_code_expires_at = db.Column(db.DateTime)
+    # Brute-force guard on /confirm: the code is a 6-digit number with no
+    # other rate limiting anywhere in the app, so this counts wrong guesses
+    # and forces a fresh registration (a new code) past a threshold, rather
+    # than leaving the same code guessable for its whole 30-minute window.
+    # Reset to 0 whenever a new pending_code is issued or one is consumed.
+    pending_code_attempts = db.Column(db.Integer, nullable=False, default=0)
 
     automations = db.relationship("Automation", back_populates="owner")
 

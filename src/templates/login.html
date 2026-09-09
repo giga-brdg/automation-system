@@ -3,6 +3,7 @@
 {% block login_content %}
 <div class="login-wrap">
   <form class="login-card" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="login-brand">SUPPLAX</div>
     <h1 class="sora">Вхід у портфель автоматизацій</h1>
     <label>Email

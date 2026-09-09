@@ -4,6 +4,7 @@
 {% block content %}
 <div class="page-title sora">{{ "Редагувати: " + automation.name if automation else "Додати автоматизацію" }}</div>
 <form method="post" class="form" style="margin-top: 1rem;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   {% if automation %}
   <label>Slug
     <input type="text" value="{{ automation.slug }}" disabled>

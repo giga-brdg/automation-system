@@ -1,6 +1,12 @@
 Flask==3.1.2
 Flask-SQLAlchemy==3.1.1
 Flask-Login==0.6.3
+Flask-WTF==1.2.2
 python-dotenv==1.1.1
 gunicorn==23.0.0
 psycopg2-binary==2.9.10
+
+# Test-only, but kept in this single flat file rather than a separate
+# requirements-dev.txt - see TESTING.md, which names pytest as the chosen
+# framework (previously an open "not yet confirmed" decision).
+pytest==8.3.4

@@ -7,6 +7,7 @@
   Візьме README.md і dashboard/ROI.md з репозиторію (те, що вже написав stage-0-supplax) і заповнить картку сам.
 </div>
 <form method="post" class="form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label>Посилання на репозиторій
     <input type="url" name="repo_url" required placeholder="https://github.com/owner/repo">
   </label>

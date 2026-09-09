@@ -17,6 +17,7 @@ Commands (admin only):
     /help                       - list commands
 """
 import os
+import secrets
 import time
 
 from . import telegram
@@ -61,8 +62,19 @@ def handle_command(text, reply):
             return
         user.role = roles_by_name[role_raw]
         user.is_approved = True
+        # Rotate rather than trust whatever api_key the row already has -
+        # every User gets one at INSERT time (a column default, see
+        # models.py), self-registration included, so without this a
+        # self-registered account's key has been sitting live since signup,
+        # never freshly issued at the moment access actually starts. Report
+        # it here only for Automator/Admin - a Viewer's key is inert anyway
+        # (api_sync_automation requires that role), no need to surface it.
+        user.api_key = secrets.token_hex(32)
         db.session.commit()
-        reply(f"Готово: {email} тепер {role_raw}.")
+        if role_raw in ("automator", "admin"):
+            reply(f"Готово: {email} тепер {role_raw}.\nAPI-ключ (для API-синку автоматизацій): {user.api_key}")
+        else:
+            reply(f"Готово: {email} тепер {role_raw}.")
     elif cmd == "/revoke" and len(parts) >= 2:
         email = parts[1].strip().lower()
         user = User.query.filter_by(email=email).first()
@@ -70,6 +82,12 @@ def handle_command(text, reply):
             reply(f"Не знайдено користувача {email}.")
             return
         user.is_approved = False
+        # Rotate api_key too, not just the approval flag - api_sync_automation
+        # now also checks is_approved (see src/app.py), so this is
+        # defense-in-depth rather than the only thing stopping it, but a
+        # revoked account's old key still shouldn't keep validating against
+        # anything that might check role alone.
+        user.api_key = secrets.token_hex(32)
         db.session.commit()
         reply(f"Доступ {email} відкликано.")
     elif cmd == "/help":

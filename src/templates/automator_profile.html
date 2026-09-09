@@ -13,10 +13,27 @@
     <span class="avatar lg">{{ automator.initials }}</span>
     <div>
       <div class="detail-title sora">{{ automator.name }}</div>
-      <div class="page-subtitle">{{ automator.email }} · {{ automator.role.label }}</div>
+      <div class="page-subtitle">
+        {% if current_user.is_admin or current_user.id == automator.id %}{{ automator.email }} · {% endif %}{{ automator.role.label }}
+      </div>
     </div>
   </div>
 </div>
+
+{% if current_user.id == automator.id and (current_user.is_admin or current_user.is_automator) %}
+<div class="panel">
+  <div class="panel-title sora">API-ключ</div>
+  <p style="font-size:12.5px; color:var(--text-muted); margin:0 0 10px;">
+    Для API-синку автоматизацій (заголовок <code>X-API-Key</code>). Показується лише один раз одразу після
+    генерації — якщо не зберіг, згенеруй новий.
+  </p>
+  <form method="post" action="{{ url_for('regenerate_api_key', user_id=automator.id) }}"
+        onsubmit="return confirm('Старий ключ одразу перестане працювати. Продовжити?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn">Згенерувати новий ключ</button>
+  </form>
+</div>
+{% endif %}
 
 <div class="panel">
   <div class="panel-title sora">Автоматизації</div>
