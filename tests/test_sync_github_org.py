@@ -5,7 +5,7 @@ Only repos with a dashboard/SUMMARY.md become automations here; archived
 repos and repos without that file are skipped outright, not stubbed in."""
 from src import github_sync
 from src.extensions import db
-from src.models import Automation, Role, User
+from src.models import Automation, PendingAutomation, Role, User
 
 
 def _make_user(email, name, role=Role.AUTOMATOR, is_approved=True):
@@ -16,15 +16,19 @@ def _make_user(email, name, role=Role.AUTOMATOR, is_approved=True):
     return user
 
 
-def _stub_org(monkeypatch, repos, summaries):
+def _stub_org(monkeypatch, repos, summaries, pipelines=None):
     """`repos`: list of {"name", "private", "archived", "default_branch"}.
     `summaries`: {repo_name: text_or_None} - what dashboard/SUMMARY.md
-    returns for each."""
+    returns for each. `pipelines`: {repo_name: text_or_None} - what
+    PIPELINE.md returns, checked only for a repo with no SUMMARY.md."""
     monkeypatch.setattr(github_sync, "list_org_repos", lambda owner: repos)
+    pipelines = pipelines or {}
 
     def fake_fetch(owner, repo, path, branch):
         if path == "dashboard/SUMMARY.md":
             return summaries.get(repo)
+        if path == "PIPELINE.md":
+            return pipelines.get(repo)
         if path == "README.md":
             return f"# {repo}\n\nSome repo.\n"
         return None
@@ -129,3 +133,110 @@ class TestSyncGithubOrg:
             automation = Automation.query.filter_by(slug="new-thing").first()
             assert automation is not None
             assert automation.owner_id == default_owner_id
+
+
+class TestPendingAutomations:
+    """A repo with PIPELINE.md but no dashboard/SUMMARY.md gets tracked as
+    "known but incomplete" instead of silently skipped - see
+    PendingAutomation in src/models.py."""
+
+    def test_repo_with_pipeline_but_no_summary_becomes_pending(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("half-done")], summaries={}, pipelines={"half-done": "# Pipeline\n"})
+            runner = app.test_cli_runner()
+            result = runner.invoke(args=["sync-github-org", "giga-brdg"])
+            assert "1 неповних" in result.output
+            assert Automation.query.count() == 0
+            pending = PendingAutomation.query.filter_by(slug="half-done").first()
+            assert pending is not None
+            assert pending.missing == "dashboard/SUMMARY.md"
+            assert pending.dismissed is False
+
+    def test_repo_with_neither_file_is_not_tracked_at_all(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("not-an-automation")], summaries={}, pipelines={})
+            runner = app.test_cli_runner()
+            result = runner.invoke(args=["sync-github-org", "giga-brdg"])
+            assert "1 пропущено" in result.output
+            assert PendingAutomation.query.count() == 0
+
+    def test_a_pending_repo_graduates_once_summary_appears(self, app, monkeypatch):
+        with app.app_context():
+            owner = _make_user("owner@x.com", "Owner")
+            pending = PendingAutomation(slug="half-done", name="half-done",
+                                         repo_url="https://github.com/giga-brdg/half-done",
+                                         missing="dashboard/SUMMARY.md")
+            db.session.add(pending)
+            db.session.commit()
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("half-done")], {"half-done": "## Name\nHalf Done\n"})
+            runner = app.test_cli_runner()
+            runner.invoke(args=["sync-github-org", "giga-brdg"])
+            assert PendingAutomation.query.count() == 0
+            assert Automation.query.filter_by(slug="half-done").first() is not None
+
+    def test_dismissed_pending_is_not_recreated_by_a_later_run(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+            pending = PendingAutomation(slug="half-done", name="half-done",
+                                         repo_url="https://github.com/giga-brdg/half-done",
+                                         missing="dashboard/SUMMARY.md", dismissed=True)
+            db.session.add(pending)
+            db.session.commit()
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("half-done")], summaries={}, pipelines={"half-done": "# Pipeline\n"})
+            runner = app.test_cli_runner()
+            runner.invoke(args=["sync-github-org", "giga-brdg"])
+            pending = PendingAutomation.query.filter_by(slug="half-done").first()
+            assert pending.dismissed is True
+
+
+class TestPendingAutomationDismiss:
+    def test_automator_can_dismiss(self, app, client, monkeypatch):
+        import re
+
+        with app.app_context():
+            user = _make_user("owner@x.com", "Owner")
+            pending = PendingAutomation(slug="half-done", name="half-done",
+                                         repo_url="https://github.com/giga-brdg/half-done",
+                                         missing="dashboard/SUMMARY.md")
+            db.session.add(pending)
+            db.session.commit()
+            pending_id = pending.id
+        token_html = client.get("/login").get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', token_html).group(1)
+        client.post("/login", data={"email": "owner@x.com", "password": "pw12345", "csrf_token": token})
+        html = client.get("/automations").get_data(as_text=True)
+        assert "half-done" in html
+        ptoken = re.search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+        resp = client.post(f"/automations/pending/{pending_id}/dismiss", data={"csrf_token": ptoken})
+        assert resp.status_code == 302
+        with app.app_context():
+            assert PendingAutomation.query.get(pending_id).dismissed is True
+        html = client.get("/automations").get_data(as_text=True)
+        assert "pending-item" not in html
+
+    def test_a_viewer_cannot_dismiss(self, app, client, monkeypatch):
+        import re
+
+        with app.app_context():
+            _make_user("viewer@x.com", "Viewer", role=Role.VIEWER)
+            pending = PendingAutomation(slug="half-done", name="half-done",
+                                         repo_url="https://github.com/giga-brdg/half-done",
+                                         missing="dashboard/SUMMARY.md")
+            db.session.add(pending)
+            db.session.commit()
+            pending_id = pending.id
+        token_html = client.get("/login").get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', token_html).group(1)
+        client.post("/login", data={"email": "viewer@x.com", "password": "pw12345", "csrf_token": token})
+        resp = client.post(f"/automations/pending/{pending_id}/dismiss", data={"csrf_token": token})
+        assert resp.status_code == 403

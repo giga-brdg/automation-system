@@ -384,3 +384,33 @@ class Skill(SecurityReviewMixin, db.Model):
     # same file format Automation uses. Null for a skill with no repo_url at
     # all (added via the API payload or seed-demo) - there's nothing to sync
     # from, so "never reviewed" is simply correct, not a gap.
+
+
+class PendingAutomation(db.Model):
+    """A repo `sync-github-org` (src/app.py) found under the GitHub org with
+    real evidence it's meant to be a Supplax automation (a PIPELINE.md -
+    stage-0-supplax's own bootstrap marker) but that hasn't actually reached
+    the dashboard yet, because it's missing dashboard/SUMMARY.md - the one
+    file the real sync requires. Deliberately NOT an Automation row: it has
+    no owner, no ROI, nothing a real automation needs - just "this exists,
+    here's what's missing," so the gap is visible instead of the repo just
+    silently not showing up. A repo with neither PIPELINE.md nor
+    dashboard/SUMMARY.md (a product SDK, an org profile repo, a shared
+    skills repo) never gets a row here at all - there's no evidence it was
+    ever meant to be an automation in the first place."""
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(120), unique=True, nullable=False)
+    name = db.Column(db.String(255), nullable=False)
+    repo_url = db.Column(db.String(500), nullable=False)
+    # Free text naming what's missing, e.g. "dashboard/SUMMARY.md" - a single
+    # known cause today, but written as text (not a fixed enum) since a
+    # second cause is a plausible future addition and this isn't parsed
+    # anywhere, only ever displayed.
+    missing = db.Column(db.String(500), nullable=False)
+    discovered_at = db.Column(db.DateTime, default=_now)
+    last_seen_at = db.Column(db.DateTime, default=_now)
+    # An automator can dismiss a false positive (a repo that has PIPELINE.md
+    # for some unrelated reason but was never meant to become a tracked
+    # automation) without it reappearing on every sync run - see
+    # sync-github-org's upsert logic, which never clears this flag itself.
+    dismissed = db.Column(db.Boolean, nullable=False, default=False)

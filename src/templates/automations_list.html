@@ -38,6 +38,34 @@
   </select>
 </form>
 
+{% if pending %}
+<div class="pending-section">
+  <div class="pending-head">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--amber);">
+      <path d="M10.3 3.9L2.9 17.1c-.5.9.1 2 1.2 2h15.8c1.1 0 1.7-1.1 1.2-2L13.7 3.9c-.6-1-2-1-2.6 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13.5"/><circle cx="12" cy="16.2" r="0.9" fill="currentColor" stroke="none"/>
+    </svg>
+    <span>Виявлено в GitHub, але не готово ({{ pending|length }})</span>
+  </div>
+  <div class="pending-list">
+    {% for p in pending %}
+    <div class="pending-item">
+      <div>
+        <a href="{{ p.repo_url }}" class="pending-name">{{ p.name }}</a>
+        <div class="pending-reason">Немає {{ p.missing }} — bootstrap почато (є PIPELINE.md), але не завершено.</div>
+      </div>
+      {% if current_user.is_admin or current_user.is_automator %}
+      <form method="post" action="{{ url_for('pending_automation_dismiss', pending_id=p.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn" style="font-size:11.5px; padding:4px 10px;">Приховати</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {% if automations %}
 <div class="grid-3">
   {% for a in automations %}

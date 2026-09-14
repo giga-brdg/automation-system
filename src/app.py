@@ -29,6 +29,7 @@ from .models import (
     Connection,
     Department,
     FeatureRow,
+    PendingAutomation,
     ROIEntry,
     ReviewLogEntry,
     Role,
@@ -458,6 +459,8 @@ def register_routes(app):
         automations = query.order_by(Automation.updated_at.desc()).all()
         counts = {s: Automation.query.filter_by(status=s).count() for s in Status}
         departments = Department.query.order_by(Department.name).all()
+        pending = (PendingAutomation.query.filter_by(dismissed=False)
+                   .order_by(PendingAutomation.discovered_at.desc()).all())
         return render_template(
             "automations_list.html",
             automations=automations,
@@ -467,6 +470,7 @@ def register_routes(app):
             active_status=status_filter,
             active_department=dept_filter,
             search=search,
+            pending=pending,
         )
 
     def apply_manual_form(automation, form):
@@ -636,6 +640,20 @@ def register_routes(app):
         db.session.commit()
         flash("Оновлено з GitHub." + (" " + " ".join(warnings) if warnings else ""))
         return redirect(url_for("automation_detail", slug=automation.slug))
+
+    @app.route("/automations/pending/<int:pending_id>/dismiss", methods=["POST"])
+    @login_required
+    @automator_required
+    def pending_automation_dismiss(pending_id):
+        """Marks a PendingAutomation as a false positive (a repo with
+        PIPELINE.md that was never actually meant to become a tracked
+        automation) - sync-github-org's upsert never clears this flag on its
+        own, so a dismissed repo stays hidden on every later run."""
+        pending = PendingAutomation.query.get_or_404(pending_id)
+        pending.dismissed = True
+        db.session.commit()
+        flash(f"«{pending.name}» приховано зі списку неповних автоматизацій.")
+        return redirect(url_for("automations_list"))
 
     @app.route("/automations/<slug>")
     @login_required
@@ -1148,6 +1166,19 @@ def register_cli(app):
         db.session.commit()
         click.echo(f"Migrated: added {len(statements)} column(s) across automation/skill.")
 
+    @app.cli.command("migrate-pending-automations")
+    def migrate_pending_automations():
+        """One-off schema migration: creates the pending_automation table
+        (see Models.PendingAutomation, sync-github-org below). Safe to run
+        more than once - uses checkfirst so an existing table is a no-op
+        rather than an error."""
+        existing_tables = set(db.inspect(db.engine).get_table_names())
+        if "pending_automation" in existing_tables:
+            click.echo("Already migrated - nothing to do.")
+            return
+        PendingAutomation.__table__.create(db.engine, checkfirst=True)
+        click.echo("Migrated: created pending_automation table.")
+
     @app.cli.command("sync-github-org")
     @click.argument("owner")
     def sync_github_org(owner):
@@ -1156,13 +1187,19 @@ def register_cli(app):
         meant to be invoked by a Railway Cron Schedule, same convention as
         check-token-usage below. NOT run continuously, and NOT the same bar
         as the single-repo /automations/import-github form: a repo with no
-        dashboard/SUMMARY.md is skipped outright here (no README-only stub),
-        because nothing distinguishes a real automation from any other repo
-        in the org (an SDK, this dashboard's own repo) except that file.
-        Archived repos are skipped too. A repo already registered here keeps
-        its current owner on every re-run; a brand-new one is assigned to
-        AUTOMATION_SYNC_OWNER_EMAIL, which must name an existing
-        Automator/Admin - there's no logged-in user to fall back to."""
+        dashboard/SUMMARY.md never becomes a real Automation here (no
+        README-only stub), because nothing distinguishes a real automation
+        from any other repo in the org (an SDK, this dashboard's own repo)
+        except that file. A repo with PIPELINE.md but no dashboard/SUMMARY.md
+        - real evidence it *was* bootstrapped as an automation, just never
+        finished reaching the dashboard - gets tracked as a PendingAutomation
+        instead of silently skipped, so it shows up on /automations as
+        "known but incomplete." A repo with neither file, or an archived one,
+        is skipped outright - no tracking, nothing to show. A repo already
+        registered as a real Automation keeps its current owner on every
+        re-run; a brand-new one is assigned to AUTOMATION_SYNC_OWNER_EMAIL,
+        which must name an existing Automator/Admin - there's no logged-in
+        user to fall back to."""
         owner_email = os.environ.get("AUTOMATION_SYNC_OWNER_EMAIL")
         default_owner = User.query.filter_by(email=owner_email).first() if owner_email else None
         if default_owner is None:
@@ -1177,19 +1214,48 @@ def register_cli(app):
             click.echo(f"Не вдалося отримати список репозиторіїв «{owner}».")
             return
 
-        imported = updated = skipped = 0
+        imported = updated = pending_count = skipped = 0
         for repo in repos:
+            repo_url = f"https://github.com/{owner}/{repo['name']}"
             if repo["archived"]:
                 skipped += 1
                 continue
             summary_text = github_sync.fetch_raw_file(
                 owner, repo["name"], "dashboard/SUMMARY.md", repo["default_branch"])
             if summary_text is None:
-                skipped += 1
+                # No dashboard/SUMMARY.md alone doesn't mean much - most repos
+                # in an org aren't Supplax automations at all (an SDK, the
+                # org's own profile repo). PIPELINE.md is stage-0-supplax's
+                # own bootstrap marker, so its presence is real evidence this
+                # repo *was* set up as an automation and just never finished
+                # reaching the dashboard - worth surfacing as "known but
+                # incomplete" instead of silently skipping like every other
+                # repo without either file.
+                pipeline_text = github_sync.fetch_raw_file(
+                    owner, repo["name"], "PIPELINE.md", repo["default_branch"])
+                if pipeline_text is None:
+                    skipped += 1
+                    continue
+                existing_pending = PendingAutomation.query.filter_by(repo_url=repo_url).first()
+                if existing_pending is None:
+                    existing_pending = PendingAutomation(
+                        slug=repo["name"].lower(), name=repo["name"], repo_url=repo_url,
+                        missing="dashboard/SUMMARY.md")
+                    db.session.add(existing_pending)
+                else:
+                    existing_pending.missing = "dashboard/SUMMARY.md"
+                existing_pending.last_seen_at = _now()
+                db.session.commit()
+                pending_count += 1
                 continue
 
+            # This repo now has dashboard/SUMMARY.md - if an earlier run
+            # tracked it as pending, it just graduated to a real automation,
+            # so that placeholder row no longer belongs on the "incomplete"
+            # list.
+            PendingAutomation.query.filter_by(repo_url=repo_url).delete()
+
             slug = repo["name"].lower()
-            repo_url = f"https://github.com/{owner}/{repo['name']}"
             # Match by repo_url first - an automation registered by hand or
             # via the single-repo import form almost never has slug ==
             # repo-name-lowercased (a human picks their own slug), so
@@ -1211,8 +1277,9 @@ def register_cli(app):
                 continue
             imported += 0 if existing else 1
             updated += 1 if existing else 0
-        click.echo(f"{owner}: {imported} нових, {updated} оновлено, {skipped} пропущено "
-                    f"(без dashboard/SUMMARY.md або архівовані).")
+        click.echo(f"{owner}: {imported} нових, {updated} оновлено, {pending_count} неповних "
+                    f"(є PIPELINE.md, немає dashboard/SUMMARY.md), {skipped} пропущено "
+                    f"(ні PIPELINE.md, ні dashboard/SUMMARY.md, або архівовано).")
 
     @app.cli.command("check-token-usage")
     def check_token_usage():
