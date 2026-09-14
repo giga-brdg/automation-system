@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_security_chip.html" as sec %}
 {% set active_nav = 'registry' %}
 {% block title %}Автоматизації{% endblock %}
 {% block content %}
@@ -46,14 +47,13 @@
       <div class="status-dot-row">
         <span class="status-dot" style="--dot-color: {{ a.status.dot_color }}"></span>
         <span class="status-label">{{ a.status.label }}</span>
-        <span class="status-dot" title="Security review: {{ a.security_review_label }}"
-              style="--dot-color: {{ a.security_review_dot_color }}; margin-left:6px;"></span>
       </div>
     </div>
     <div>
       <div class="card-name sora">{{ a.name }}</div>
       <div class="card-desc">{{ a.one_liner or "" }}</div>
     </div>
+    {{ sec.security_chip(a.security_review_state, a.security_review_label) }}
     <div class="card-divider"></div>
     <div class="card-row">
       <div class="card-roi">

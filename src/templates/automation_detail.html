@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_security_chip.html" as sec %}
 {% set active_nav = 'registry' %}
 {% block title %}{{ automation.name }}{% endblock %}
 {% block content %}
@@ -287,17 +288,14 @@
 
     <div class="panel">
       <div class="panel-title sora">Security review</div>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span class="status-dot" style="--dot-color: {{ automation.security_review_dot_color }}; width:8px; height:8px;"></span>
-        <span style="font-size:13px; font-weight:500;">{{ automation.security_review_label }}</span>
-      </div>
+      {{ sec.security_chip(automation.security_review_state, automation.security_review_label) }}
       <div style="font-size:12px; color:var(--text-muted); margin-top:8px; line-height:1.5;">
         {% if automation.security_review_state == 'none' %}
         Ще не проходила через `/security-review` — або проходила, але dashboard/SECURITY_REVIEW.md
         у репозиторії ще не з'явився чи не синхронізований.
         {% else %}
         Останній прогін: {{ automation.security_review_at.strftime("%Y-%m-%d") }}.
-        {% if automation.security_review_state == 'findings' %}
+        {% if automation.security_review_state in ('medium', 'high') %}
         Відкрито: {{ automation.security_review_high or 0 }} High, {{ automation.security_review_medium or 0 }} Medium.
         {% endif %}
         Це знімок на момент прогону, не жива гарантія — новий код після цієї дати ще не перевірявся.

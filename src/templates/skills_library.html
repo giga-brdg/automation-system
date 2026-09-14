@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_security_chip.html" as sec %}
 {% set active_nav = 'skills' %}
 {% block title %}Бібліотека скіллів{% endblock %}
 {% block content %}
@@ -34,6 +35,7 @@
     </div>
     <div class="card-name sora">{{ s.name }}</div>
     <div style="font-size:12px; color:var(--text-muted); line-height:1.5;">{{ s.description }}</div>
+    {% if s.repo_url %}{{ sec.security_chip(s.security_review_state, s.security_review_label) }}{% endif %}
     <div style="display:flex; gap:12px; align-items:center;">
       {% if s.doc_url %}<a href="{{ s.doc_url }}" style="font-size:11.5px;">Документація →</a>{% endif %}
       {% if s.repo_url %}<a href="{{ s.repo_url }}" style="font-size:11.5px;">GitHub →</a>{% endif %}

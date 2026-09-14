@@ -87,13 +87,29 @@ class TestSecurityReviewBadgeState:
                                      security_review_high=0, security_review_medium=0)
             assert automation.security_review_state == "clean"
 
-    def test_reviewed_with_open_findings(self, app):
+    def test_reviewed_with_a_high_finding(self, app):
         with app.app_context():
             user = _make_user("a@x.com", "A")
             automation = Automation(slug="thing", name="Thing", owner_id=user.id,
                                      security_review_at=datetime(2026, 9, 14),
                                      security_review_high=1, security_review_medium=0)
-            assert automation.security_review_state == "findings"
+            assert automation.security_review_state == "high"
+
+    def test_reviewed_with_only_a_medium_finding(self, app):
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id,
+                                     security_review_at=datetime(2026, 9, 14),
+                                     security_review_high=0, security_review_medium=1)
+            assert automation.security_review_state == "medium"
+
+    def test_high_takes_priority_over_medium(self, app):
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id,
+                                     security_review_at=datetime(2026, 9, 14),
+                                     security_review_high=1, security_review_medium=5)
+            assert automation.security_review_state == "high"
 
     def test_null_counts_after_a_reviewed_date_count_as_clean(self, app):
         """A row from before this column existed, or a file with a
@@ -162,9 +178,9 @@ class TestSecurityReviewGithubSync:
         client.post("/automations/thing/resync", data={"csrf_token": token})
         with app.app_context():
             automation = Automation.query.filter_by(slug="thing").first()
-            assert automation.security_review_state == "findings"
+            assert automation.security_review_state == "high"
             assert automation.security_review_high == 2
             assert automation.security_review_medium == 1
 
         html = client.get("/automations/thing").get_data(as_text=True)
-        assert "Перевірено — є знахідки" in html
+        assert "Перевірено — є знахідки (High)" in html

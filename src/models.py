@@ -148,7 +148,47 @@ automation_skills = db.Table(
 )
 
 
-class Automation(db.Model):
+class SecurityReviewMixin:
+    """Shared by Automation and Skill: a record of the last time someone ran
+    Claude Code's built-in `/security-review` against that repo's pending
+    changes, synced from a dashboard/SECURITY_REVIEW.md file the repo owner
+    writes by hand after a real run - not a full-codebase audit, and not
+    something this dashboard can trigger itself. `security_review_at` stays
+    None until such a file actually gets synced - "never reviewed" is a
+    real, expected state the badge shows honestly rather than defaulting to
+    clean. See SECURITY.md's Known Limitations for why this is a
+    point-in-time attestation, not a live guarantee: nothing re-checks it as
+    the repo keeps changing underneath it."""
+    security_review_at = db.Column(db.DateTime)
+    security_review_high = db.Column(db.Integer)
+    security_review_medium = db.Column(db.Integer)
+
+    _SECURITY_REVIEW_LABELS = {
+        "none": "Не перевірено",
+        "clean": "Перевірено — чисто",
+        "medium": "Перевірено — є знахідки (Medium)",
+        "high": "Перевірено — є знахідки (High)",
+    }
+
+    @property
+    def security_review_state(self):
+        """"none" / "clean" / "medium" / "high" - severity of the worst
+        still-open finding, not just "reviewed vs not". Drives both the
+        shield chip's color and its shape (src/templates/_security_chip.html)."""
+        if self.security_review_at is None:
+            return "none"
+        if (self.security_review_high or 0) > 0:
+            return "high"
+        if (self.security_review_medium or 0) > 0:
+            return "medium"
+        return "clean"
+
+    @property
+    def security_review_label(self):
+        return self._SECURITY_REVIEW_LABELS[self.security_review_state]
+
+
+class Automation(SecurityReviewMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     slug = db.Column(db.String(120), unique=True, nullable=False)
     name = db.Column(db.String(255), nullable=False)
@@ -201,48 +241,6 @@ class Automation(db.Model):
     # Null/empty means nobody has filled this in yet - not the same as "every
     # answer was blank".
     stage0_answers = db.Column(db.JSON)
-    # From dashboard/SECURITY_REVIEW.md (GitHub-sync only, see github_sync.
-    # security_review_fields_from_sections) - a record of the last time
-    # someone ran Claude Code's built-in `/security-review` against this
-    # repo's pending changes, not a full-codebase audit and not something
-    # this dashboard can trigger itself. security_review_at is None until a
-    # repo with that file actually gets imported/resynced - "never reviewed"
-    # is a real, expected state the UI shows honestly, not an error.
-    security_review_at = db.Column(db.DateTime)
-    security_review_high = db.Column(db.Integer)
-    security_review_medium = db.Column(db.Integer)
-
-    _SECURITY_REVIEW_LABELS = {
-        "none": "Не перевірено",
-        "clean": "Перевірено — чисто",
-        "findings": "Перевірено — є знахідки",
-    }
-    _SECURITY_REVIEW_COLORS = {
-        "none": "var(--text-muted)",
-        "clean": "var(--green)",
-        "findings": "var(--red)",
-    }
-
-    @property
-    def security_review_state(self):
-        """"none" (never synced a dashboard/SECURITY_REVIEW.md with a real
-        date), "clean" (reviewed, zero open High/Medium), or "findings"
-        (reviewed, something still open) - see SECURITY.md's own Known
-        Limitations for why this is a point-in-time attestation, not a live
-        guarantee: nothing re-checks it as the repo keeps changing."""
-        if self.security_review_at is None:
-            return "none"
-        if (self.security_review_high or 0) + (self.security_review_medium or 0) == 0:
-            return "clean"
-        return "findings"
-
-    @property
-    def security_review_label(self):
-        return self._SECURITY_REVIEW_LABELS[self.security_review_state]
-
-    @property
-    def security_review_dot_color(self):
-        return self._SECURITY_REVIEW_COLORS[self.security_review_state]
 
     owner = db.relationship("User", back_populates="automations")
     departments = db.relationship("Department", secondary=automation_departments, backref="automations")
@@ -368,7 +366,7 @@ class AutomationPage(db.Model):
     automation = db.relationship("Automation", back_populates="pages")
 
 
-class Skill(db.Model):
+class Skill(SecurityReviewMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), unique=True, nullable=False)
     description = db.Column(db.Text)
@@ -379,3 +377,10 @@ class Skill(db.Model):
     # update this row by name instead of creating a duplicate. Null for
     # skills that only ever arrived via the API sync payload or seed-demo.
     repo_url = db.Column(db.String(500))
+    # security_review_at/high/medium (SecurityReviewMixin) come from
+    # {path/}dashboard/SECURITY_REVIEW.md in the skill's own repo (or its
+    # subdirectory, for a shared multi-skill repo) - read by
+    # sync_skill_from_github / sync_skills_from_github_folder in src/app.py,
+    # same file format Automation uses. Null for a skill with no repo_url at
+    # all (added via the API payload or seed-demo) - there's nothing to sync
+    # from, so "never reviewed" is simply correct, not a gap.

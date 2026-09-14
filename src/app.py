@@ -762,7 +762,7 @@ def register_routes(app):
         return send_file(buf, mimetype="application/zip", as_attachment=True,
                           download_name=f"{safe_name}.zip")
 
-    def _upsert_skill(name, description, repo_url, doc_url):
+    def _upsert_skill(name, description, repo_url, doc_url, security_review_text=None):
         skill = Skill.query.filter_by(name=name).first()
         if skill is None:
             skill = Skill(name=name)
@@ -770,6 +770,15 @@ def register_routes(app):
         skill.description = description or skill.description
         skill.repo_url = repo_url
         skill.doc_url = doc_url
+        if security_review_text is not None:
+            # Same "file fetched" gate sync_automation_from_github uses for
+            # dashboard/SECURITY_REVIEW.md - absence is "never reviewed"
+            # (columns stay None), not something to warn about.
+            sec_fields = github_sync.security_review_fields_from_sections(
+                github_sync.parse_security_review_md(security_review_text))
+            skill.security_review_at = sec_fields["reviewed_at"]
+            skill.security_review_high = sec_fields["high"]
+            skill.security_review_medium = sec_fields["medium"]
         return skill
 
     def sync_skill_from_github(repo_url):
@@ -795,8 +804,11 @@ def register_routes(app):
         if not fields.get("name"):
             raise ValueError("SKILL.md знайдено, але в ньому немає поля 'name' у frontmatter.")
 
+        security_review_path = f"{path}/dashboard/SECURITY_REVIEW.md" if path else "dashboard/SECURITY_REVIEW.md"
+        security_review_text = github_sync.fetch_raw_file(owner_gh, repo, security_review_path, branch)
         return _upsert_skill(fields["name"], fields.get("description"), repo_url,
-                              f"https://github.com/{owner_gh}/{repo}/blob/{branch}/{skill_path}")
+                              f"https://github.com/{owner_gh}/{repo}/blob/{branch}/{skill_path}",
+                              security_review_text=security_review_text)
 
     def sync_skills_from_github_folder(repo_url):
         """Bulk import: repo_url points at a folder
@@ -837,9 +849,12 @@ def register_routes(app):
             if not fields.get("name"):
                 skipped.append(f"{name} (SKILL.md без поля 'name')")
                 continue
+            security_review_text = github_sync.fetch_raw_file(
+                owner_gh, repo, f"{path}/{name}/dashboard/SECURITY_REVIEW.md", branch)
             _upsert_skill(fields["name"], fields.get("description"),
                           f"https://github.com/{owner_gh}/{repo}/tree/{branch}/{path}/{name}",
-                          f"https://github.com/{owner_gh}/{repo}/blob/{branch}/{skill_path}")
+                          f"https://github.com/{owner_gh}/{repo}/blob/{branch}/{skill_path}",
+                          security_review_text=security_review_text)
             imported.append(fields["name"])
         return imported, skipped
 
@@ -1110,24 +1125,28 @@ def register_cli(app):
     @app.cli.command("migrate-security-review")
     def migrate_security_review():
         """One-off schema migration for the dashboard/SECURITY_REVIEW.md sync
-        columns (see src/github_sync.py's security_review_fields_from_sections,
-        sync_automation_from_github, Automation.security_review_state). Safe
-        to run more than once."""
-        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("automation")}
+        columns on both tables SecurityReviewMixin backs (see
+        src/github_sync.py's security_review_fields_from_sections,
+        sync_automation_from_github, sync_skill_from_github,
+        Automation/Skill.security_review_state). Safe to run more than once,
+        and safe to re-run after Skill's columns were added later - each
+        table's columns are checked independently."""
         statements = []
-        if "security_review_at" not in existing_cols:
-            statements.append("ALTER TABLE automation ADD COLUMN security_review_at TIMESTAMP")
-        if "security_review_high" not in existing_cols:
-            statements.append("ALTER TABLE automation ADD COLUMN security_review_high INTEGER")
-        if "security_review_medium" not in existing_cols:
-            statements.append("ALTER TABLE automation ADD COLUMN security_review_medium INTEGER")
+        for table in ("automation", "skill"):
+            existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns(table)}
+            if "security_review_at" not in existing_cols:
+                statements.append(f"ALTER TABLE {table} ADD COLUMN security_review_at TIMESTAMP")
+            if "security_review_high" not in existing_cols:
+                statements.append(f"ALTER TABLE {table} ADD COLUMN security_review_high INTEGER")
+            if "security_review_medium" not in existing_cols:
+                statements.append(f"ALTER TABLE {table} ADD COLUMN security_review_medium INTEGER")
         if not statements:
             click.echo("Already migrated - nothing to do.")
             return
         for stmt in statements:
             db.session.execute(db.text(stmt))
         db.session.commit()
-        click.echo(f"Migrated: added {len(statements)} column(s) to automation.")
+        click.echo(f"Migrated: added {len(statements)} column(s) across automation/skill.")
 
     @app.cli.command("sync-github-org")
     @click.argument("owner")

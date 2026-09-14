@@ -82,7 +82,10 @@ templates) and `src/static/style.css` (the oklch design-token system `models.py`
   `src/stage0_questions.py` — null until someone fills in `/automations/<slug>/stage0`
   — and `security_review_at`/`security_review_high`/`security_review_medium`, synced
   only from `dashboard/SECURITY_REVIEW.md`, never set any other way), a
-  skills catalog (`Skill`) and department-based categorization (`Department`, both
+  skills catalog (`Skill` — carries those same three `security_review_*` columns, via
+  the shared `SecurityReviewMixin` both models inherit, synced from
+  `{path/}dashboard/SECURITY_REVIEW.md` in the skill's own repo instead) and
+  department-based categorization (`Department`, both
   many-to-many via join tables — there is no separate `Category` model, despite that
   term showing up in `ROADMAP.md`'s product framing), ownership, ROI metrics
   (`ROIEntry`), a GitHub link plus a `clickup_url` free-text field (see ClickUp note
@@ -121,10 +124,16 @@ templates) and `src/static/style.css` (the oklch design-token system `models.py`
   `## Pages` section only clears stale pages when `SUMMARY.md` was actually fetched).
   `dashboard/SECURITY_REVIEW.md` is a record of the last time someone ran Claude Code's
   built-in `/security-review` command against the repo (diff-scoped, not a full-codebase
-  audit) — its absence sets `Automation.security_review_at` to `None`, which
-  `Automation.security_review_state` (`src/models.py`) surfaces honestly as "не
-  перевірено" rather than defaulting to "clean"; nothing in this app can trigger that
-  command itself, sync only ever reads whatever record a human/Claude session already
+  audit) — its absence sets `security_review_at` to `None`, which `security_review_state`
+  (`SecurityReviewMixin`, `src/models.py`) surfaces honestly as "не перевірено" rather
+  than defaulting to "clean". The exact same file convention (and mixin) covers `Skill`
+  too — `sync_skill_from_github`/`sync_skills_from_github_folder` fetch
+  `{path/}dashboard/SECURITY_REVIEW.md` from the skill's own repo (or subdirectory, for
+  a shared multi-skill repo) the same way — and `src/templates/_security_chip.html` is
+  the one shield-icon macro both `Automation` and `Skill` cards/detail panels render it
+  through, so the four states (`none`/`clean`/`medium`/`high`) look identical everywhere.
+  Nothing in this app can trigger `/security-review` itself, sync only ever reads
+  whatever record a human/Claude session already
   wrote and pushed.
   `dashboard/SUMMARY.md`'s `## Skills` bullet list links the automation against the
   skills library (`/skills`) by exact name match — unlike `## Departments`, an

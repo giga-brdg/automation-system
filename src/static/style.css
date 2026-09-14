@@ -127,6 +127,17 @@ a:hover { color: var(--accent); }
 
 .empty-state { text-align: center; padding: 4rem 1rem; color: var(--text-muted); }
 
+/* ---- security-review shield chip (Automation + Skill) ---- */
+.sec-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+  border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.sec-chip svg { width: 12px; height: 12px; flex-shrink: 0; }
+.sec-chip--none { background: var(--surface-alt); color: var(--text-muted); }
+.sec-chip--clean { background: var(--green-soft); color: oklch(35% 0.1 148); }
+.sec-chip--medium { background: var(--amber-soft); color: oklch(35% 0.1 75); }
+.sec-chip--high { background: var(--red-soft); color: oklch(35% 0.1 25); }
+
 /* ---- detail page ---- */
 .detail-head { display: flex; align-items: flex-start; justify-content: space-between; }
 .detail-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
