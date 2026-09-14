@@ -1170,9 +1170,18 @@ def register_cli(app):
                 continue
 
             slug = repo["name"].lower()
-            existing = Automation.query.filter_by(slug=slug).first()
-            owner_id = existing.owner_id if existing else default_owner.id
             repo_url = f"https://github.com/{owner}/{repo['name']}"
+            # Match by repo_url first - an automation registered by hand or
+            # via the single-repo import form almost never has slug ==
+            # repo-name-lowercased (a human picks their own slug), so
+            # matching on slug alone would silently create a duplicate
+            # automation for a repo that's already registered under a
+            # different slug. Only fall back to slug for a repo this same
+            # command already created on an earlier run (which does use
+            # this exact convention).
+            existing = (Automation.query.filter_by(repo_url=repo_url).first()
+                        or Automation.query.filter_by(slug=slug).first())
+            owner_id = existing.owner_id if existing else default_owner.id
             try:
                 sync_automation_from_github(existing, repo_url, owner_id, "", [], slug=slug)
                 db.session.commit()

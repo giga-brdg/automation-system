@@ -92,6 +92,31 @@ class TestSyncGithubOrg:
             automation = Automation.query.filter_by(slug="thing").first()
             assert automation.owner_id == real_owner_id
 
+    def test_matches_an_existing_automation_by_repo_url_even_with_a_different_slug(self, app, monkeypatch):
+        """Regression test: a hand-registered or single-repo-imported
+        automation almost never has slug == repo-name-lowercased (a human
+        picks their own slug) - matching on slug alone silently created a
+        duplicate automation in production for exactly this case (repo
+        'automation-system' already registered under slug
+        'automation-dashboard') before this test was added."""
+        with app.app_context():
+            owner = _make_user("owner@x.com", "Owner")
+            automation = Automation(slug="my-custom-slug", name="Old Name", owner_id=owner.id,
+                                     repo_url="https://github.com/giga-brdg/thing")
+            db.session.add(automation)
+            db.session.commit()
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nNew Name\n"})
+            runner = app.test_cli_runner()
+            result = runner.invoke(args=["sync-github-org", "giga-brdg"])
+            assert "0 нових" in result.output
+            assert "1 оновлено" in result.output
+            assert Automation.query.count() == 1
+            automation = Automation.query.filter_by(slug="my-custom-slug").first()
+            assert automation is not None
+            assert automation.name == "New Name"
+
     def test_a_brand_new_repo_is_owned_by_the_configured_default(self, app, monkeypatch):
         with app.app_context():
             default_owner = _make_user("default@x.com", "Default")
