@@ -387,17 +387,21 @@ class Skill(SecurityReviewMixin, db.Model):
 
 
 class PendingAutomation(db.Model):
-    """A repo `sync-github-org` (src/app.py) found under the GitHub org with
-    real evidence it's meant to be a Supplax automation (a PIPELINE.md -
-    stage-0-supplax's own bootstrap marker) but that hasn't actually reached
-    the dashboard yet, because it's missing dashboard/SUMMARY.md - the one
-    file the real sync requires. Deliberately NOT an Automation row: it has
-    no owner, no ROI, nothing a real automation needs - just "this exists,
-    here's what's missing," so the gap is visible instead of the repo just
-    silently not showing up. A repo with neither PIPELINE.md nor
-    dashboard/SUMMARY.md (a product SDK, an org profile repo, a shared
-    skills repo) never gets a row here at all - there's no evidence it was
-    ever meant to be an automation in the first place."""
+    """A non-archived repo `sync-github-org` (src/app.py) found under the
+    GitHub org that hasn't reached the dashboard yet, because it's missing
+    dashboard/SUMMARY.md - the one file the real sync requires. Deliberately
+    NOT an Automation row: it has no owner, no ROI, nothing a real
+    automation needs - just "this exists, here's what's missing," so the
+    gap is visible instead of the repo just silently not showing up.
+    `missing` also notes whether stage-0-supplax's PIPELINE.md is present
+    (bootstrapped, never finished reaching the dashboard) or not (nobody's
+    confirmed this is even meant to be an automation) - but every
+    non-archived repo without dashboard/SUMMARY.md gets a row either way,
+    because that distinction alone isn't reliable enough to silently drop a
+    repo on: a real, hand-rolled automation with no stage-0 history looks
+    identical to an SDK package or a shared skills workspace from here. An
+    automator dismisses whichever of those turn out not to be real
+    automations - see `dismissed` below."""
     id = db.Column(db.Integer, primary_key=True)
     slug = db.Column(db.String(120), unique=True, nullable=False)
     name = db.Column(db.String(255), nullable=False)

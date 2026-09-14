@@ -1190,16 +1190,21 @@ def register_cli(app):
         dashboard/SUMMARY.md never becomes a real Automation here (no
         README-only stub), because nothing distinguishes a real automation
         from any other repo in the org (an SDK, this dashboard's own repo)
-        except that file. A repo with PIPELINE.md but no dashboard/SUMMARY.md
-        - real evidence it *was* bootstrapped as an automation, just never
-        finished reaching the dashboard - gets tracked as a PendingAutomation
-        instead of silently skipped, so it shows up on /automations as
-        "known but incomplete." A repo with neither file, or an archived one,
-        is skipped outright - no tracking, nothing to show. A repo already
-        registered as a real Automation keeps its current owner on every
-        re-run; a brand-new one is assigned to AUTOMATION_SYNC_OWNER_EMAIL,
-        which must name an existing Automator/Admin - there's no logged-in
-        user to fall back to."""
+        except that file. It also doesn't get silently dropped, though -
+        whether or not it has PIPELINE.md (stage-0-supplax's own bootstrap
+        marker - present means it *was* set up as an automation and just
+        never finished reaching the dashboard; absent just means nobody's
+        confirmed it either way), every non-archived repo without
+        dashboard/SUMMARY.md gets tracked as a PendingAutomation so it shows
+        up on /automations as "known but incomplete," with `missing` noting
+        whether stage-0 ran or not. An automator dismisses whatever turns
+        out not to be a real automation (an SDK, a skills workspace) via
+        that page's own button - this command never un-dismisses one on a
+        later run. Only an archived repo is skipped outright, no tracking.
+        A repo already registered as a real Automation keeps its current
+        owner on every re-run; a brand-new one is assigned to
+        AUTOMATION_SYNC_OWNER_EMAIL, which must name an existing
+        Automator/Admin - there's no logged-in user to fall back to."""
         owner_email = os.environ.get("AUTOMATION_SYNC_OWNER_EMAIL")
         default_owner = User.query.filter_by(email=owner_email).first() if owner_email else None
         if default_owner is None:
@@ -1223,27 +1228,28 @@ def register_cli(app):
             summary_text = github_sync.fetch_raw_file(
                 owner, repo["name"], "dashboard/SUMMARY.md", repo["default_branch"])
             if summary_text is None:
-                # No dashboard/SUMMARY.md alone doesn't mean much - most repos
-                # in an org aren't Supplax automations at all (an SDK, the
-                # org's own profile repo). PIPELINE.md is stage-0-supplax's
-                # own bootstrap marker, so its presence is real evidence this
-                # repo *was* set up as an automation and just never finished
-                # reaching the dashboard - worth surfacing as "known but
-                # incomplete" instead of silently skipping like every other
-                # repo without either file.
+                # No dashboard/SUMMARY.md doesn't prove this is a real
+                # automation - some repos in the org genuinely aren't one
+                # (an SDK package, a skills workspace). But guessing that
+                # from repo content is unreliable in the other direction too
+                # (a real product with no PIPELINE.md looks the same as an
+                # SDK from here) - a first pass here only tracked repos with
+                # PIPELINE.md and missed a real one without it. Track every
+                # non-archived repo instead, and let an automator dismiss
+                # whatever turns out not to be an automation - see the
+                # dismiss route below, which this loop never overrides.
                 pipeline_text = github_sync.fetch_raw_file(
                     owner, repo["name"], "PIPELINE.md", repo["default_branch"])
-                if pipeline_text is None:
-                    skipped += 1
-                    continue
+                missing = ("dashboard/SUMMARY.md (стейдж-0 пройдено)" if pipeline_text is not None
+                           else "dashboard/SUMMARY.md (стейдж-0 ще не проходив)")
                 existing_pending = PendingAutomation.query.filter_by(repo_url=repo_url).first()
                 if existing_pending is None:
                     existing_pending = PendingAutomation(
                         slug=repo["name"].lower(), name=repo["name"], repo_url=repo_url,
-                        missing="dashboard/SUMMARY.md")
+                        missing=missing)
                     db.session.add(existing_pending)
                 else:
-                    existing_pending.missing = "dashboard/SUMMARY.md"
+                    existing_pending.missing = missing
                 existing_pending.last_seen_at = _now()
                 db.session.commit()
                 pending_count += 1
@@ -1278,8 +1284,7 @@ def register_cli(app):
             imported += 0 if existing else 1
             updated += 1 if existing else 0
         click.echo(f"{owner}: {imported} нових, {updated} оновлено, {pending_count} неповних "
-                    f"(є PIPELINE.md, немає dashboard/SUMMARY.md), {skipped} пропущено "
-                    f"(ні PIPELINE.md, ні dashboard/SUMMARY.md, або архівовано).")
+                    f"(немає dashboard/SUMMARY.md), {skipped} архівованих пропущено.")
 
     @app.cli.command("check-token-usage")
     def check_token_usage():

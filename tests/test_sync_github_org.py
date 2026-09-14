@@ -1,8 +1,10 @@
 """Covers the `flask sync-github-org <owner>` CLI command (src/app.py) - the
 bulk counterpart to /automations/import-github, meant to run on a schedule
 (see check-token-usage for the same "one-shot, cron-invoked" convention).
-Only repos with a dashboard/SUMMARY.md become automations here; archived
-repos and repos without that file are skipped outright, not stubbed in."""
+Only repos with a dashboard/SUMMARY.md become real Automation rows; a
+non-archived repo without one is tracked as PendingAutomation instead of
+silently dropped (see TestPendingAutomations below) - only an archived repo
+is skipped outright."""
 from src import github_sync
 from src.extensions import db
 from src.models import Automation, PendingAutomation, Role, User
@@ -64,7 +66,7 @@ class TestSyncGithubOrg:
             runner = app.test_cli_runner()
             result = runner.invoke(args=["sync-github-org", "giga-brdg"])
             assert "1 нових" in result.output
-            assert "1 пропущено" in result.output
+            assert "1 неповних" in result.output
             slugs = {a.slug for a in Automation.query.all()}
             assert slugs == {"has-summary"}
 
@@ -136,9 +138,13 @@ class TestSyncGithubOrg:
 
 
 class TestPendingAutomations:
-    """A repo with PIPELINE.md but no dashboard/SUMMARY.md gets tracked as
+    """Any non-archived repo without dashboard/SUMMARY.md gets tracked as
     "known but incomplete" instead of silently skipped - see
-    PendingAutomation in src/models.py."""
+    PendingAutomation in src/models.py. Whether PIPELINE.md is present only
+    changes the `missing` text, not whether it's tracked at all: a real
+    hand-rolled automation with no stage-0 history looks identical to an
+    SDK package from repo content alone, so the distinction isn't reliable
+    enough to silently drop a repo on."""
 
     def test_repo_with_pipeline_but_no_summary_becomes_pending(self, app, monkeypatch):
         with app.app_context():
@@ -152,18 +158,36 @@ class TestPendingAutomations:
             assert Automation.query.count() == 0
             pending = PendingAutomation.query.filter_by(slug="half-done").first()
             assert pending is not None
-            assert pending.missing == "dashboard/SUMMARY.md"
+            assert pending.missing == "dashboard/SUMMARY.md (стейдж-0 пройдено)"
             assert pending.dismissed is False
 
-    def test_repo_with_neither_file_is_not_tracked_at_all(self, app, monkeypatch):
+    def test_repo_with_neither_file_is_still_tracked_as_pending(self, app, monkeypatch):
+        """Regression test: a repo can be a real, hand-rolled automation
+        (never bootstrapped via stage-0-supplax) - requiring PIPELINE.md as
+        proof missed exactly this case in production (a real B2C product
+        repo with no stage-0 history), so absence of PIPELINE.md must not
+        silently drop the repo, only change the `missing` wording."""
         with app.app_context():
             _make_user("owner@x.com", "Owner")
         monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
         with app.app_context():
-            _stub_org(monkeypatch, [_repo("not-an-automation")], summaries={}, pipelines={})
+            _stub_org(monkeypatch, [_repo("maybe-an-automation")], summaries={}, pipelines={})
             runner = app.test_cli_runner()
             result = runner.invoke(args=["sync-github-org", "giga-brdg"])
-            assert "1 пропущено" in result.output
+            assert "1 неповних" in result.output
+            pending = PendingAutomation.query.filter_by(slug="maybe-an-automation").first()
+            assert pending is not None
+            assert pending.missing == "dashboard/SUMMARY.md (стейдж-0 ще не проходив)"
+
+    def test_an_archived_repo_is_skipped_and_not_tracked(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("old-thing", archived=True)], summaries={}, pipelines={})
+            runner = app.test_cli_runner()
+            result = runner.invoke(args=["sync-github-org", "giga-brdg"])
+            assert "1 архівованих пропущено" in result.output
             assert PendingAutomation.query.count() == 0
 
     def test_a_pending_repo_graduates_once_summary_appears(self, app, monkeypatch):
