@@ -46,15 +46,16 @@ command lives in Railway's project settings, not in git:
   also no migration framework (no Alembic/Flask-Migrate): schema is created/
   updated by hand via custom Flask CLI commands in `src/app.py` (`flask init-db`
   for a fresh DB; `flask migrate-registration`, `flask migrate-skill-repo-url`,
-  `flask migrate-token-usage`, and `flask migrate-confirm-attempts` for
-  feature-specific columns added since — the last of these, for `/confirm`'s
-  brute-force lockout, has **not yet been run against the production
-  database** as of this writing, see `SECURITY.md`'s Known Limitations for
-  what breaks until it is). A from-scratch or restored DB also has no login path until someone
+  `flask migrate-token-usage`, `flask migrate-confirm-attempts`, `flask
+  migrate-stage0-answers`, and `flask migrate-security-review` for feature-specific
+  columns added since — the
+  `/confirm` one, for its brute-force lockout, has **not yet been run against
+  the production database** as of this writing, see `SECURITY.md`'s Known
+  Limitations for what breaks until it is). A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without
   this step `init-db`/`migrate-registration` alone leave nobody able to log in
-  or approve further registrations. All three commands have to be run against
+  or approve further registrations. Every migration command above has to be run against
   the prod DB manually to have effect there — that's this doc's own
   characterization of what "run against prod" means, not a phrase used
   anywhere else in the repo (`README.md` documents all three purely as
@@ -118,6 +119,14 @@ command lives in Railway's project settings, not in git:
   The project also runs a `token-usage-cron` service (`check-token-usage`,
   see `docs/token_usage_alerts_plan.md`) and its own `Postgres` — both
   confirmed live alongside `web` and `bot`.
+- **`sync-github-org` runs on its own cron service — `github-org-sync-cron`,
+  confirmed live** alongside `web`/`bot`/`token-usage-cron`. Same treatment as
+  `token-usage-cron`: `flask --app src.app sync-github-org giga-brdg`, daily at
+  03:00 UTC (`0 3 * * *` — new repos and README/ROI edits aren't minute-to-minute
+  events, unlike token spend). `DATABASE_URL` and `GITHUB_TOKEN` are Railway
+  reference variables (`${{Postgres.DATABASE_URL}}` / `${{web.GITHUB_TOKEN}}`), not
+  literal copies, so rotating either on its source service updates this one too.
+  `AUTOMATION_SYNC_OWNER_EMAIL` is set directly on this service.
 - **Still genuinely undecided / undocumented**: a real IaC setup for
   `infra/staging`/`infra/prod`; the actual deploy trigger (push-to-`main`
   auto-deploy via Railway's GitHub integration vs. `railway up` vs. a manual

@@ -75,3 +75,5 @@ live
 - humanizer
 - artifact-design
 - use-railway
+- artifact-diagramming
+- security-review

@@ -19,6 +19,7 @@ from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import ai_usage, github_sync, telegram
+from . import stage0_questions
 from .extensions import db, login_manager
 from .models import (
     Automation,
@@ -128,6 +129,203 @@ def automator_required(view):
             abort(403)
         return view(*args, **kwargs)
     return wrapped
+
+
+def sync_automation_from_github(automation, repo_url, owner_id, form_status, selected_dept_ids, slug=None):
+    """Shared by the first-time import form and the per-automation
+    'Оновити з GitHub' button: fetch README.md/dashboard/ROI.md/
+    dashboard/SUMMARY.md and apply them to `automation` (a new unsaved
+    instance, or an existing one being refreshed). These two live in a
+    dedicated dashboard/ folder because they're a generated sync
+    contract, not hand-maintained project docs - the automation's repo
+    keeps its own real ROI/functionality writeups elsewhere (docs/
+    roi_explained.md, docs/functions.md) and regenerates these two from
+    them. Raises on a GitHub fetch failure - callers turn that into a
+    flash message."""
+    parsed = github_sync.parse_repo_url(repo_url)
+    if not parsed:
+        raise ValueError("Не схоже на посилання на GitHub-репозиторій "
+                          "(очікую https://github.com/власник/репо).")
+    owner_gh, repo = parsed
+
+    branch = github_sync.default_branch(owner_gh, repo)
+    readme_text = github_sync.fetch_raw_file(owner_gh, repo, "README.md", branch)
+    roi_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/ROI.md", branch)
+    summary_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/SUMMARY.md", branch)
+    functions_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/functions.md", branch)
+    backlog_text = github_sync.fetch_raw_file(owner_gh, repo, "backlog/BACKLOG.md", branch)
+    security_review_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/SECURITY_REVIEW.md", branch)
+    # dashboard/TODO.md is the generated mirror automation-portfolio-sync
+    # keeps in sync with the automation's real (root) TODO.md - prefer it,
+    # but fall back to the root file for repos synced before that mirror
+    # existed, so they don't silently lose their TODO section.
+    todo_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/TODO.md", branch)
+    if todo_text is None:
+        todo_text = github_sync.fetch_raw_file(owner_gh, repo, "TODO.md", branch)
+    latest_commit = github_sync.fetch_latest_commit(owner_gh, repo, branch)
+
+    title, one_liner = github_sync.parse_readme(readme_text)
+    roi_sections = github_sync.parse_roi_md(roi_text)
+    summary = github_sync.summary_fields_from_sections(
+        github_sync.parse_markdown_sections(summary_text))
+
+    if automation is None:
+        automation = Automation(slug=slug or repo.lower(), owner_id=owner_id,
+                                 name=summary["name"] or title or repo)
+        db.session.add(automation)
+    # dashboard/SUMMARY.md is the purpose-built contract - prefer it over
+    # README's prose whenever it's actually present.
+    automation.name = summary["name"] or title or automation.name
+    automation.one_liner = summary["one_liner"] or one_liner or automation.one_liner
+    automation.description = summary["description"] or automation.description
+    automation.repo_url = repo_url
+    automation.owner_id = owner_id
+    automation.last_synced_at = _now()
+    if summary_text:
+        # Only overwrite the manual override when SUMMARY.md was actually
+        # fetched - otherwise a missing file would silently wipe out a
+        # human-entered override ("очікуємо погодження") just because
+        # the file wasn't there to read, not because anyone cleared it.
+        automation.current_stage_override = summary["current_stage_override"]
+    if latest_commit:
+        automation.last_commit_message = latest_commit["message"]
+        if latest_commit["date"]:
+            automation.last_commit_at = datetime.fromisoformat(latest_commit["date"].replace("Z", "+00:00"))
+
+    warnings = []
+    if not summary_text:
+        warnings.append("dashboard/SUMMARY.md не знайдено — дані неповні (взято тільки з README.md/dashboard/ROI.md).")
+    if form_status:
+        automation.status = Status(form_status)
+    elif summary["status"]:
+        try:
+            automation.status = Status(summary["status"])
+        except ValueError:
+            warnings.append(f"Невідомий статус '{summary['status']}' у dashboard/SUMMARY.md — залишив попередній.")
+
+    if selected_dept_ids:
+        automation.departments = Department.query.filter(Department.id.in_(selected_dept_ids)).all()
+    elif summary_text:
+        # Gate on the file having been fetched, not on the parsed list
+        # being non-empty - a repo that genuinely lists no departments
+        # anymore must clear old ones, not keep whatever synced last time.
+        depts = []
+        for name in summary["departments"]:
+            dept = Department.query.filter_by(name=name).first()
+            if not dept:
+                dept = Department(name=name, hue=hue_for(name))
+                db.session.add(dept)
+            depts.append(dept)
+        automation.departments = depts
+
+    if summary_text:
+        links = []
+        skipped = []
+        for c in summary["connections"]:
+            target = Automation.query.filter_by(slug=c["slug"]).first()
+            if target and target.id != automation.id:
+                links.append(Connection(connected_automation_id=target.id,
+                                         relationship_type=c["relationship_type"]))
+            elif c["slug"]:
+                skipped.append(c["slug"])
+        automation.connections = links
+        if skipped:
+            warnings.append("Не знайдено (ще?) автоматизації для зв'язку: " + ", ".join(skipped))
+
+    if summary_text:
+        # Unlike Departments, don't auto-create a bare Skill row for a
+        # name that isn't already in the library - the library is a
+        # curated catalog (real description, doc_url, imported from an
+        # actual skill repo), not free-text tags, so an unmatched name
+        # is reported and skipped instead, same treatment Connections'
+        # unmatched slug already gets above.
+        skills = []
+        skipped_skills = []
+        for name in summary["skills"]:
+            skill = Skill.query.filter_by(name=name).first()
+            if skill:
+                skills.append(skill)
+            else:
+                skipped_skills.append(name)
+        automation.skills = skills
+        if skipped_skills:
+            warnings.append("Не знайдено в бібліотеці скіл(и): " + ", ".join(skipped_skills) +
+                             " — спершу додай їх на /skills.")
+
+    if roi_sections:
+        fields = github_sync.roi_fields_from_sections(roi_sections)
+        if automation.roi is None:
+            automation.roi = ROIEntry()
+        automation.roi.hypothesis = fields["hypothesis"] or automation.roi.hypothesis
+        automation.roi.metric_description = fields["metric_description"] or automation.roi.metric_description
+        automation.roi.confidence = fields["confidence"]
+        automation.roi.measured_value = fields["measured_value"] or automation.roi.measured_value
+        automation.roi.presentation_url = fields["presentation_url"] or automation.roi.presentation_url
+        automation.roi.qualitative_notes = fields["qualitative_notes"] or automation.roi.qualitative_notes
+    elif not roi_text:
+        warnings.append("dashboard/ROI.md у репозиторії не знайдено.")
+
+    if summary_text:
+        # summary_text present means dashboard/SUMMARY.md was actually
+        # fetched - an empty "## Pages" section there is a real signal
+        # ("this repo has no pages to report"), not a fetch miss, so it
+        # must clear stale pages instead of leaving old ones stuck
+        # forever (unlike summary_text is None, where SUMMARY.md itself
+        # is missing and the existing warning above already covers it).
+        function_details = github_sync.parse_functions_md(functions_text)
+        if summary["pages"]:
+            automation.pages = [
+                AutomationPage(name=p["name"], description=p["description"],
+                                detail=function_details.get(p["name"]) or None, order_index=i)
+                for i, p in enumerate(summary["pages"])
+            ]
+        elif function_details:
+            # Headless automation (no UI screens, so no '## Pages' in
+            # SUMMARY.md) - dashboard/functions.md's own sections are
+            # still real content, so show them directly instead of
+            # losing them entirely for lack of a page to attach to.
+            automation.pages = [
+                AutomationPage(name=name, description=body, order_index=i)
+                for i, (name, body) in enumerate(function_details.items())
+            ]
+        else:
+            automation.pages = []
+
+    if backlog_text is not None:
+        # fetch_raw_file only returns None on a confirmed 404 - any other
+        # fetch failure raises and aborts the sync before this point, so
+        # "file fetched" vs "file missing" is a real, deterministic fact
+        # here, not a network blip. Gate on that, not on the parsed list
+        # being non-empty, so a cleared-out BACKLOG.md actually clears
+        # the dashboard's stale review log instead of leaving it stuck.
+        backlog_entries = github_sync.parse_backlog_md(backlog_text, limit=5)
+        automation.review_log = [
+            ReviewLogEntry(round_label=e["round_label"], found=e["found"],
+                            changed=e["changed"], rejected=e["rejected"], order_index=i)
+            for i, e in enumerate(backlog_entries)
+        ]
+
+    if security_review_text is not None:
+        # Same "file fetched" gate as backlog/BACKLOG.md above - absence
+        # of the file is the expected, honest "never reviewed" state
+        # (Automation.security_review_at defaults to None), not
+        # something to warn about; only overwrite once a file is
+        # actually there to read, so a transient fetch miss can't
+        # silently erase a previously-recorded review.
+        sec_fields = github_sync.security_review_fields_from_sections(
+            github_sync.parse_security_review_md(security_review_text))
+        automation.security_review_at = sec_fields["reviewed_at"]
+        automation.security_review_high = sec_fields["high"]
+        automation.security_review_medium = sec_fields["medium"]
+
+    if todo_text is not None:
+        todo_items = github_sync.parse_todo_md(todo_text)
+        automation.todo_items = [
+            AutomationTodoItem(text=t["text"], done=t["done"], order_index=i)
+            for i, t in enumerate(todo_items)
+        ]
+
+    return automation, warnings
 
 
 def register_routes(app):
@@ -323,7 +521,12 @@ def register_routes(app):
             apply_manual_form(automation, request.form)
             db.session.add(automation)
             db.session.commit()
-            return redirect(url_for("automation_detail", slug=automation.slug))
+            # Straight to the Stage 0 interview next, not the detail page -
+            # this is the point where answering it is cheapest (the automator
+            # is already here filling in the basics), and stage0_form.html
+            # itself links onward to automation_detail so it's a detour, not
+            # a dead end.
+            return redirect(url_for("automation_stage0", slug=automation.slug))
         return render_template("automation_form.html", departments=departments, skills=skills,
                                 users=users, statuses=Status, automation=None,
                                 default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
@@ -347,187 +550,25 @@ def register_routes(app):
                                 default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
                                 ai_usage_projects=ai_usage.list_projects())
 
-    def sync_automation_from_github(automation, repo_url, owner_id, form_status, selected_dept_ids, slug=None):
-        """Shared by the first-time import form and the per-automation
-        'Оновити з GitHub' button: fetch README.md/dashboard/ROI.md/
-        dashboard/SUMMARY.md and apply them to `automation` (a new unsaved
-        instance, or an existing one being refreshed). These two live in a
-        dedicated dashboard/ folder because they're a generated sync
-        contract, not hand-maintained project docs - the automation's repo
-        keeps its own real ROI/functionality writeups elsewhere (docs/
-        roi_explained.md, docs/functions.md) and regenerates these two from
-        them. Raises on a GitHub fetch failure - callers turn that into a
-        flash message."""
-        parsed = github_sync.parse_repo_url(repo_url)
-        if not parsed:
-            raise ValueError("Не схоже на посилання на GitHub-репозиторій "
-                              "(очікую https://github.com/власник/репо).")
-        owner_gh, repo = parsed
-
-        branch = github_sync.default_branch(owner_gh, repo)
-        readme_text = github_sync.fetch_raw_file(owner_gh, repo, "README.md", branch)
-        roi_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/ROI.md", branch)
-        summary_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/SUMMARY.md", branch)
-        functions_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/functions.md", branch)
-        backlog_text = github_sync.fetch_raw_file(owner_gh, repo, "backlog/BACKLOG.md", branch)
-        # dashboard/TODO.md is the generated mirror automation-portfolio-sync
-        # keeps in sync with the automation's real (root) TODO.md - prefer it,
-        # but fall back to the root file for repos synced before that mirror
-        # existed, so they don't silently lose their TODO section.
-        todo_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/TODO.md", branch)
-        if todo_text is None:
-            todo_text = github_sync.fetch_raw_file(owner_gh, repo, "TODO.md", branch)
-        latest_commit = github_sync.fetch_latest_commit(owner_gh, repo, branch)
-
-        title, one_liner = github_sync.parse_readme(readme_text)
-        roi_sections = github_sync.parse_roi_md(roi_text)
-        summary = github_sync.summary_fields_from_sections(
-            github_sync.parse_markdown_sections(summary_text))
-
-        if automation is None:
-            automation = Automation(slug=slug or repo.lower(), owner_id=owner_id,
-                                     name=summary["name"] or title or repo)
-            db.session.add(automation)
-        # dashboard/SUMMARY.md is the purpose-built contract - prefer it over
-        # README's prose whenever it's actually present.
-        automation.name = summary["name"] or title or automation.name
-        automation.one_liner = summary["one_liner"] or one_liner or automation.one_liner
-        automation.description = summary["description"] or automation.description
-        automation.repo_url = repo_url
-        automation.owner_id = owner_id
-        automation.last_synced_at = _now()
-        if summary_text:
-            # Only overwrite the manual override when SUMMARY.md was actually
-            # fetched - otherwise a missing file would silently wipe out a
-            # human-entered override ("очікуємо погодження") just because
-            # the file wasn't there to read, not because anyone cleared it.
-            automation.current_stage_override = summary["current_stage_override"]
-        if latest_commit:
-            automation.last_commit_message = latest_commit["message"]
-            if latest_commit["date"]:
-                automation.last_commit_at = datetime.fromisoformat(latest_commit["date"].replace("Z", "+00:00"))
-
-        warnings = []
-        if not summary_text:
-            warnings.append("dashboard/SUMMARY.md не знайдено — дані неповні (взято тільки з README.md/dashboard/ROI.md).")
-        if form_status:
-            automation.status = Status(form_status)
-        elif summary["status"]:
-            try:
-                automation.status = Status(summary["status"])
-            except ValueError:
-                warnings.append(f"Невідомий статус '{summary['status']}' у dashboard/SUMMARY.md — залишив попередній.")
-
-        if selected_dept_ids:
-            automation.departments = Department.query.filter(Department.id.in_(selected_dept_ids)).all()
-        elif summary_text:
-            # Gate on the file having been fetched, not on the parsed list
-            # being non-empty - a repo that genuinely lists no departments
-            # anymore must clear old ones, not keep whatever synced last time.
-            depts = []
-            for name in summary["departments"]:
-                dept = Department.query.filter_by(name=name).first()
-                if not dept:
-                    dept = Department(name=name, hue=hue_for(name))
-                    db.session.add(dept)
-                depts.append(dept)
-            automation.departments = depts
-
-        if summary_text:
-            links = []
-            skipped = []
-            for c in summary["connections"]:
-                target = Automation.query.filter_by(slug=c["slug"]).first()
-                if target and target.id != automation.id:
-                    links.append(Connection(connected_automation_id=target.id,
-                                             relationship_type=c["relationship_type"]))
-                elif c["slug"]:
-                    skipped.append(c["slug"])
-            automation.connections = links
-            if skipped:
-                warnings.append("Не знайдено (ще?) автоматизації для зв'язку: " + ", ".join(skipped))
-
-        if summary_text:
-            # Unlike Departments, don't auto-create a bare Skill row for a
-            # name that isn't already in the library - the library is a
-            # curated catalog (real description, doc_url, imported from an
-            # actual skill repo), not free-text tags, so an unmatched name
-            # is reported and skipped instead, same treatment Connections'
-            # unmatched slug already gets above.
-            skills = []
-            skipped_skills = []
-            for name in summary["skills"]:
-                skill = Skill.query.filter_by(name=name).first()
-                if skill:
-                    skills.append(skill)
-                else:
-                    skipped_skills.append(name)
-            automation.skills = skills
-            if skipped_skills:
-                warnings.append("Не знайдено в бібліотеці скіл(и): " + ", ".join(skipped_skills) +
-                                 " — спершу додай їх на /skills.")
-
-        if roi_sections:
-            fields = github_sync.roi_fields_from_sections(roi_sections)
-            if automation.roi is None:
-                automation.roi = ROIEntry()
-            automation.roi.hypothesis = fields["hypothesis"] or automation.roi.hypothesis
-            automation.roi.metric_description = fields["metric_description"] or automation.roi.metric_description
-            automation.roi.confidence = fields["confidence"]
-            automation.roi.measured_value = fields["measured_value"] or automation.roi.measured_value
-            automation.roi.presentation_url = fields["presentation_url"] or automation.roi.presentation_url
-            automation.roi.qualitative_notes = fields["qualitative_notes"] or automation.roi.qualitative_notes
-        elif not roi_text:
-            warnings.append("dashboard/ROI.md у репозиторії не знайдено.")
-
-        if summary_text:
-            # summary_text present means dashboard/SUMMARY.md was actually
-            # fetched - an empty "## Pages" section there is a real signal
-            # ("this repo has no pages to report"), not a fetch miss, so it
-            # must clear stale pages instead of leaving old ones stuck
-            # forever (unlike summary_text is None, where SUMMARY.md itself
-            # is missing and the existing warning above already covers it).
-            function_details = github_sync.parse_functions_md(functions_text)
-            if summary["pages"]:
-                automation.pages = [
-                    AutomationPage(name=p["name"], description=p["description"],
-                                    detail=function_details.get(p["name"]) or None, order_index=i)
-                    for i, p in enumerate(summary["pages"])
-                ]
-            elif function_details:
-                # Headless automation (no UI screens, so no '## Pages' in
-                # SUMMARY.md) - dashboard/functions.md's own sections are
-                # still real content, so show them directly instead of
-                # losing them entirely for lack of a page to attach to.
-                automation.pages = [
-                    AutomationPage(name=name, description=body, order_index=i)
-                    for i, (name, body) in enumerate(function_details.items())
-                ]
-            else:
-                automation.pages = []
-
-        if backlog_text is not None:
-            # fetch_raw_file only returns None on a confirmed 404 - any other
-            # fetch failure raises and aborts the sync before this point, so
-            # "file fetched" vs "file missing" is a real, deterministic fact
-            # here, not a network blip. Gate on that, not on the parsed list
-            # being non-empty, so a cleared-out BACKLOG.md actually clears
-            # the dashboard's stale review log instead of leaving it stuck.
-            backlog_entries = github_sync.parse_backlog_md(backlog_text, limit=5)
-            automation.review_log = [
-                ReviewLogEntry(round_label=e["round_label"], found=e["found"],
-                                changed=e["changed"], rejected=e["rejected"], order_index=i)
-                for i, e in enumerate(backlog_entries)
-            ]
-
-        if todo_text is not None:
-            todo_items = github_sync.parse_todo_md(todo_text)
-            automation.todo_items = [
-                AutomationTodoItem(text=t["text"], done=t["done"], order_index=i)
-                for i, t in enumerate(todo_items)
-            ]
-
-        return automation, warnings
+    @app.route("/automations/<slug>/stage0", methods=["GET", "POST"])
+    @login_required
+    def automation_stage0(slug):
+        """The Stage 0 interview (src/stage0_questions.py), filled in the
+        dashboard so a later `stage-0-supplax` bootstrap run can pull it via
+        the read-only API endpoint below and skip whatever's already
+        answered here, instead of asking live in a Claude Code session."""
+        automation = Automation.query.filter_by(slug=slug).first_or_404()
+        if not current_user.can_manage(automation):
+            abort(403)
+        if request.method == "POST":
+            automation.stage0_answers = stage0_questions.collect_answers(request.form)
+            db.session.commit()
+            n = stage0_questions.answered_phase_count(automation.stage0_answers)
+            flash(f"Відповіді Stage 0 збережено ({n}/9 фаз).")
+            return redirect(url_for("automation_detail", slug=automation.slug))
+        return render_template("stage0_form.html", automation=automation,
+                                phases=stage0_questions.PHASES,
+                                answers=automation.stage0_answers or {})
 
     @app.route("/automations/import-github", methods=["GET", "POST"])
     @login_required
@@ -933,6 +974,36 @@ def register_routes(app):
         db.session.commit()
         return jsonify({"ok": True, "slug": automation.slug}), 200
 
+    @app.route("/api/automations/<slug>/stage0-answers", methods=["GET"])
+    @csrf.exempt  # machine-facing, X-API-Key auth - same reasoning as api_sync_automation above
+    def api_stage0_answers(slug):
+        """Read-only counterpart to api_sync_automation: lets stage-0-supplax's
+        own bootstrap step pull whatever Stage 0 interview answers were
+        already filled in on the automation's dashboard page
+        (/automations/<slug>/stage0), keyed the same way
+        src/stage0_questions.py stores them, so the skill can skip asking
+        about anything already present here. Same auth as the push endpoint
+        (X-API-Key -> owner lookup -> role + is_approved check) - this is
+        automation metadata, not user PII, but it's still gated to an
+        approved Automator/Admin, and still only the automation's own owner
+        or an admin, matching api_sync_automation's ownership check."""
+        api_key = request.headers.get("X-API-Key")
+        owner = User.query.filter_by(api_key=api_key).first() if api_key else None
+        if not owner:
+            return jsonify({"error": "invalid or missing X-API-Key"}), 401
+        if owner.role not in (Role.ADMIN, Role.AUTOMATOR) or not owner.is_approved:
+            return jsonify({"error": "this account isn't allowed to read automation data"}), 403
+
+        automation = Automation.query.filter_by(slug=slug).first()
+        if automation is None:
+            return jsonify({"error": "no automation with that slug"}), 404
+        if automation.owner_id != owner.id and not owner.is_admin:
+            return jsonify({"error": "automation exists under a different owner"}), 403
+
+        if not automation.stage0_answers:
+            return jsonify({"error": "no Stage 0 answers filled in yet"}), 404
+        return jsonify({"slug": automation.slug, "answers": automation.stage0_answers}), 200
+
 
 def register_cli(app):
     @app.cli.command("init-db")
@@ -1022,6 +1093,98 @@ def register_cli(app):
             db.session.execute(db.text(stmt))
         db.session.commit()
         click.echo(f"Migrated: added {len(statements)} column(s) to automation.")
+
+    @app.cli.command("migrate-stage0-answers")
+    def migrate_stage0_answers():
+        """One-off schema migration for the Stage 0 interview answers column
+        (see src/stage0_questions.py, automation_stage0, api_stage0_answers).
+        Safe to run more than once."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("automation")}
+        if "stage0_answers" in existing_cols:
+            click.echo("Already migrated - nothing to do.")
+            return
+        db.session.execute(db.text("ALTER TABLE automation ADD COLUMN stage0_answers JSON"))
+        db.session.commit()
+        click.echo("Migrated: added stage0_answers column to automation.")
+
+    @app.cli.command("migrate-security-review")
+    def migrate_security_review():
+        """One-off schema migration for the dashboard/SECURITY_REVIEW.md sync
+        columns (see src/github_sync.py's security_review_fields_from_sections,
+        sync_automation_from_github, Automation.security_review_state). Safe
+        to run more than once."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("automation")}
+        statements = []
+        if "security_review_at" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN security_review_at TIMESTAMP")
+        if "security_review_high" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN security_review_high INTEGER")
+        if "security_review_medium" not in existing_cols:
+            statements.append("ALTER TABLE automation ADD COLUMN security_review_medium INTEGER")
+        if not statements:
+            click.echo("Already migrated - nothing to do.")
+            return
+        for stmt in statements:
+            db.session.execute(db.text(stmt))
+        db.session.commit()
+        click.echo(f"Migrated: added {len(statements)} column(s) to automation.")
+
+    @app.cli.command("sync-github-org")
+    @click.argument("owner")
+    def sync_github_org(owner):
+        """One-shot bulk sync of every repo under a GitHub org or user
+        account (`owner`, e.g. "giga-brdg") that has a dashboard/SUMMARY.md -
+        meant to be invoked by a Railway Cron Schedule, same convention as
+        check-token-usage below. NOT run continuously, and NOT the same bar
+        as the single-repo /automations/import-github form: a repo with no
+        dashboard/SUMMARY.md is skipped outright here (no README-only stub),
+        because nothing distinguishes a real automation from any other repo
+        in the org (an SDK, this dashboard's own repo) except that file.
+        Archived repos are skipped too. A repo already registered here keeps
+        its current owner on every re-run; a brand-new one is assigned to
+        AUTOMATION_SYNC_OWNER_EMAIL, which must name an existing
+        Automator/Admin - there's no logged-in user to fall back to."""
+        owner_email = os.environ.get("AUTOMATION_SYNC_OWNER_EMAIL")
+        default_owner = User.query.filter_by(email=owner_email).first() if owner_email else None
+        if default_owner is None:
+            click.echo("AUTOMATION_SYNC_OWNER_EMAIL не задано або не знайдено такого користувача — "
+                        "потрібен існуючий Automator/Admin для щойно знайдених автоматизацій.")
+            return
+
+        try:
+            repos = github_sync.list_org_repos(owner)
+        except Exception:
+            app.logger.exception("sync-github-org: could not list repos for %s", owner)
+            click.echo(f"Не вдалося отримати список репозиторіїв «{owner}».")
+            return
+
+        imported = updated = skipped = 0
+        for repo in repos:
+            if repo["archived"]:
+                skipped += 1
+                continue
+            summary_text = github_sync.fetch_raw_file(
+                owner, repo["name"], "dashboard/SUMMARY.md", repo["default_branch"])
+            if summary_text is None:
+                skipped += 1
+                continue
+
+            slug = repo["name"].lower()
+            existing = Automation.query.filter_by(slug=slug).first()
+            owner_id = existing.owner_id if existing else default_owner.id
+            repo_url = f"https://github.com/{owner}/{repo['name']}"
+            try:
+                sync_automation_from_github(existing, repo_url, owner_id, "", [], slug=slug)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("sync-github-org: failed syncing %s/%s", owner, repo["name"])
+                skipped += 1
+                continue
+            imported += 0 if existing else 1
+            updated += 1 if existing else 0
+        click.echo(f"{owner}: {imported} нових, {updated} оновлено, {skipped} пропущено "
+                    f"(без dashboard/SUMMARY.md або архівовані).")
 
     @app.cli.command("check-token-usage")
     def check_token_usage():

@@ -115,6 +115,12 @@
         </svg>
         Редагувати
       </a>
+      <a class="btn" href="{{ url_for('automation_stage0', slug=automation.slug) }}">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+        </svg>
+        {% if automation.stage0_answers %}Stage 0: {{ automation.stage0_answers|length }}/9 фаз{% else %}Заповнити Stage 0{% endif %}
+      </a>
       {% endif %}
       {% if not automation.repo_url and current_user.can_manage(automation) %}
       <a class="btn" href="{{ url_for('automation_import_github', slug=automation.slug, owner_id=automation.owner_id) }}">
@@ -275,6 +281,26 @@
           {% endif %}
         {% else %}
           Не підключено до GitHub.
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title sora">Security review</div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="status-dot" style="--dot-color: {{ automation.security_review_dot_color }}; width:8px; height:8px;"></span>
+        <span style="font-size:13px; font-weight:500;">{{ automation.security_review_label }}</span>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted); margin-top:8px; line-height:1.5;">
+        {% if automation.security_review_state == 'none' %}
+        Ще не проходила через `/security-review` — або проходила, але dashboard/SECURITY_REVIEW.md
+        у репозиторії ще не з'явився чи не синхронізований.
+        {% else %}
+        Останній прогін: {{ automation.security_review_at.strftime("%Y-%m-%d") }}.
+        {% if automation.security_review_state == 'findings' %}
+        Відкрито: {{ automation.security_review_high or 0 }} High, {{ automation.security_review_medium or 0 }} Medium.
+        {% endif %}
+        Це знімок на момент прогону, не жива гарантія — новий код після цієї дати ще не перевірявся.
         {% endif %}
       </div>
     </div>

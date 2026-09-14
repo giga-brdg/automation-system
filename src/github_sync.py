@@ -12,6 +12,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime
 
 REPO_URL_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$")
 _TREE_URL_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+?)/tree/([^/]+)/(.+?)/?$")
@@ -45,6 +46,46 @@ def _github_headers():
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def list_org_repos(owner):
+    """Lists every repo the configured GITHUB_TOKEN can see under `owner` -
+    public and private alike, archived included (the caller decides whether
+    to skip those). Tries the Organization endpoint first
+    (api.github.com/orgs/<owner>/repos); a 404 there means `owner` is a
+    plain user account, not a GitHub Organization, so it retries against
+    the User endpoint instead - same try-then-fallback shape as
+    default_branch above, just for account type instead of branch name.
+    Paginates in batches of 100. Raises on anything but that one 404."""
+    def _pages(base_url):
+        page = 1
+        while True:
+            req = urllib.request.Request(
+                f"{base_url}?per_page=100&page={page}&type=all", headers=_github_headers())
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                batch = json.loads(resp.read().decode("utf-8"))
+            if not batch:
+                return
+            yield from batch
+            if len(batch) < 100:
+                return
+            page += 1
+
+    try:
+        raw_repos = list(_pages(f"https://api.github.com/orgs/{owner}/repos"))
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+        raw_repos = list(_pages(f"https://api.github.com/users/{owner}/repos"))
+    return [
+        {
+            "name": r["name"],
+            "private": r["private"],
+            "archived": r["archived"],
+            "default_branch": r.get("default_branch") or "main",
+        }
+        for r in raw_repos
+    ]
 
 
 def default_branch(owner, repo):
@@ -414,3 +455,42 @@ def roi_fields_from_sections(sections):
         "presentation_url": presentation_url,
         "qualitative_notes": "\n".join(qualitative_items) or None,
     }
+
+
+# Back-compat-style alias, same convention as parse_roi_md above -
+# dashboard/SECURITY_REVIEW.md uses the same '## Heading' splitter.
+parse_security_review_md = parse_markdown_sections
+
+_FINDING_COUNT_RE = re.compile(r"^\s*(High|Medium)\s*:\s*(\d+)\s*$", re.IGNORECASE)
+
+
+def security_review_fields_from_sections(sections):
+    """Maps dashboard/SECURITY_REVIEW.md's sections to Automation's
+    security_review_* columns. This file is a record of the last time
+    someone ran Claude Code's built-in `/security-review` skill against the
+    repo - not generated from another doc (like ROI.md/SUMMARY.md) and not a
+    durable log (like backlog/BACKLOG.md) - just the latest run's own date
+    and open-finding counts. Absent entirely, or with an unparseable/empty
+    '## Last Review', means "never reviewed" - reviewed_at stays None rather
+    than defaulting to some other value, so the dashboard can show that
+    honestly instead of assuming clean."""
+    reviewed_at = None
+    for line in sections.get("Last Review", "").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                reviewed_at = datetime.strptime(line, "%Y-%m-%d")
+            except ValueError:
+                reviewed_at = None
+            break
+    high = medium = 0
+    for item in _bullet_items(sections.get("Open Findings", "")):
+        m = _FINDING_COUNT_RE.match(item)
+        if not m:
+            continue
+        count = int(m.group(2))
+        if m.group(1).lower() == "high":
+            high = count
+        else:
+            medium = count
+    return {"reviewed_at": reviewed_at, "high": high, "medium": medium}

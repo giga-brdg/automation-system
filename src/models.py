@@ -192,6 +192,57 @@ class Automation(db.Model):
     # re-alert every cron run. One of "budget_80"/"budget_100"/"spike"/null.
     last_token_alert_kind = db.Column(db.String(20))
     last_token_alert_at = db.Column(db.DateTime)
+    # Answers to stage-0-supplax's 9-phase interview (src/stage0_questions.py),
+    # filled in the dashboard at registration time instead of live in a Claude
+    # Code session - {"1": {"one_liner": "...", ...}, "2": {...}, ...}, phase
+    # numbers/question keys matching that skill's own reference file 1:1. Read
+    # by GET /api/automations/<slug>/stage0-answers so a bootstrap run can
+    # treat these as already-known and only ask about what's actually missing.
+    # Null/empty means nobody has filled this in yet - not the same as "every
+    # answer was blank".
+    stage0_answers = db.Column(db.JSON)
+    # From dashboard/SECURITY_REVIEW.md (GitHub-sync only, see github_sync.
+    # security_review_fields_from_sections) - a record of the last time
+    # someone ran Claude Code's built-in `/security-review` against this
+    # repo's pending changes, not a full-codebase audit and not something
+    # this dashboard can trigger itself. security_review_at is None until a
+    # repo with that file actually gets imported/resynced - "never reviewed"
+    # is a real, expected state the UI shows honestly, not an error.
+    security_review_at = db.Column(db.DateTime)
+    security_review_high = db.Column(db.Integer)
+    security_review_medium = db.Column(db.Integer)
+
+    _SECURITY_REVIEW_LABELS = {
+        "none": "Не перевірено",
+        "clean": "Перевірено — чисто",
+        "findings": "Перевірено — є знахідки",
+    }
+    _SECURITY_REVIEW_COLORS = {
+        "none": "var(--text-muted)",
+        "clean": "var(--green)",
+        "findings": "var(--red)",
+    }
+
+    @property
+    def security_review_state(self):
+        """"none" (never synced a dashboard/SECURITY_REVIEW.md with a real
+        date), "clean" (reviewed, zero open High/Medium), or "findings"
+        (reviewed, something still open) - see SECURITY.md's own Known
+        Limitations for why this is a point-in-time attestation, not a live
+        guarantee: nothing re-checks it as the repo keeps changing."""
+        if self.security_review_at is None:
+            return "none"
+        if (self.security_review_high or 0) + (self.security_review_medium or 0) == 0:
+            return "clean"
+        return "findings"
+
+    @property
+    def security_review_label(self):
+        return self._SECURITY_REVIEW_LABELS[self.security_review_state]
+
+    @property
+    def security_review_dot_color(self):
+        return self._SECURITY_REVIEW_COLORS[self.security_review_state]
 
     owner = db.relationship("User", back_populates="automations")
     departments = db.relationship("Department", secondary=automation_departments, backref="automations")

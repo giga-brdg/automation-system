@@ -9,8 +9,7 @@
   </div>
   {% if current_user.is_admin or current_user.is_automator %}
   <div style="display:flex; gap:8px;">
-    <a class="btn" href="{{ url_for('automation_import_github') }}">Синхронізувати з GitHub</a>
-    <a class="btn btn-primary" href="{{ url_for('automation_new') }}">+ Додати автоматизацію</a>
+    <a class="btn btn-primary" href="{{ url_for('automation_import_github') }}">Синхронізувати з GitHub</a>
   </div>
   {% endif %}
 </div>
@@ -47,6 +46,8 @@
       <div class="status-dot-row">
         <span class="status-dot" style="--dot-color: {{ a.status.dot_color }}"></span>
         <span class="status-label">{{ a.status.label }}</span>
+        <span class="status-dot" title="Security review: {{ a.security_review_label }}"
+              style="--dot-color: {{ a.security_review_dot_color }}; margin-left:6px;"></span>
       </div>
     </div>
     <div>
@@ -73,7 +74,7 @@
 <div class="empty-state">
   <p>Поки немає жодної автоматизації.</p>
   {% if current_user.is_admin or current_user.is_automator %}
-  <a class="btn btn-primary" href="{{ url_for('automation_new') }}">Додати першу</a>
+  <a class="btn btn-primary" href="{{ url_for('automation_import_github') }}">Синхронізувати з GitHub</a>
   {% else %}
   <p>Зверніться до адміністратора.</p>
   {% endif %}

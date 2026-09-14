@@ -65,15 +65,23 @@ templates) and `src/static/style.css` (the oklch design-token system `models.py`
   `/automations/import-github` (`@login_required`, `@automator_required`) and
   `/automations/<slug>/resync` (`@login_required`, plus an ownership check via
   `User.can_manage`) — these are what the "GitHub sync" bullet below describes; see
-  there for what they fetch. Separately, there is one *inbound* API endpoint,
-  `POST /api/automations/<slug>/sync`, authenticated per-user via an `X-API-Key` header
-  (`User.api_key`) rather than session auth — an external skill
-  (`automation-portfolio-sync`) pushes a full metadata upsert to it. That endpoint is
-  push-only and never itself calls out to GitHub; don't confuse it with the two routes
-  above even though both are colloquially "the sync."
+  there for what they fetch. Separately, there are two *inbound* API endpoints,
+  authenticated per-user via an `X-API-Key` header (`User.api_key`) rather than
+  session auth: `POST /api/automations/<slug>/sync`, which an external skill
+  (`automation-portfolio-sync`) pushes a full metadata upsert to, and `GET
+  /api/automations/<slug>/stage0-answers`, a read-only counterpart that lets
+  `stage-0-supplax`'s own bootstrap step pull back whatever Stage 0 interview
+  answers (`Automation.stage0_answers`, filled at `/automations/<slug>/stage0`,
+  `src/stage0_questions.py`) were already entered in the dashboard, so it can skip
+  re-asking. Neither endpoint calls out to GitHub; don't confuse either with the two
+  routes above even though all four are colloquially "the sync."
 - **Database** — SQLite at `data/portfolio.db` by default with zero config; set
   `DATABASE_URL` to point at Postgres instead (`src/app.py`). Schema code is written to
-  work against either backend. Holds: automations (with a free-text description), a
+  work against either backend. Holds: automations (with a free-text description, a
+  `stage0_answers` JSON blob for the Stage 0 interview keyed by phase number per
+  `src/stage0_questions.py` — null until someone fills in `/automations/<slug>/stage0`
+  — and `security_review_at`/`security_review_high`/`security_review_medium`, synced
+  only from `dashboard/SECURITY_REVIEW.md`, never set any other way), a
   skills catalog (`Skill`) and department-based categorization (`Department`, both
   many-to-many via join tables — there is no separate `Category` model, despite that
   term showing up in `ROADMAP.md`'s product framing), ownership, ROI metrics
@@ -93,18 +101,31 @@ templates) and `src/static/style.css` (the oklch design-token system `models.py`
   and `FeatureRow`, which that GitHub sync never touches; those two are written only by
   the *inbound* `POST /api/automations/<slug>/sync` endpoint described above
   (`api_sync_automation` in `src/app.py`).
-- **GitHub sync** — live today, not future work, triggered only by the two routes
-  named above (never by the inbound API endpoint). The orchestration and every
-  clear-vs-preserve decision live in `sync_automation_from_github` in `src/app.py`;
-  `src/github_sync.py` itself is just stateless fetch/parse helpers (`fetch_raw_file`,
+- **GitHub sync** — live today, not future work, triggered by the two routes named
+  above and by the `sync-github-org` CLI command (never by the inbound API endpoint).
+  `sync_automation_from_github` (module-level in `src/app.py`, not nested in either
+  caller — `sync-github-org` needed to reach it from `register_cli` too) holds every
+  clear-vs-preserve decision for a single repo; `sync-github-org` itself is a thin loop
+  over `github_sync.list_org_repos()` that calls that same function per repo, with a
+  stricter bar than the single-repo routes (skips a repo outright if it has no
+  `dashboard/SUMMARY.md`, rather than falling back to README). `src/github_sync.py`
+  itself is just stateless fetch/parse helpers (`fetch_raw_file`, `list_org_repos`,
   `parse_readme`, `parse_roi_md`, `summary_fields_from_sections`, `parse_functions_md`,
-  `parse_todo_md`, `parse_backlog_md`) with no orchestration of its own. On sync it
-  fetches and parses `README.md` (name/one-liner fallback), `dashboard/ROI.md`,
-  `dashboard/SUMMARY.md`, `dashboard/functions.md`, `dashboard/TODO.md` (falling back to
-  root `TODO.md`), and `backlog/BACKLOG.md` from the automation's own repo into
-  `Automation`, `ROIEntry`, `AutomationPage`, `Connection`, `AutomationTodoItem`, and
+  `parse_todo_md`, `parse_backlog_md`, `security_review_fields_from_sections`) with no
+  orchestration of its own. On sync it fetches and parses `README.md` (name/one-liner
+  fallback), `dashboard/ROI.md`, `dashboard/SUMMARY.md`, `dashboard/functions.md`,
+  `dashboard/TODO.md` (falling back to root `TODO.md`), `backlog/BACKLOG.md`, and
+  `dashboard/SECURITY_REVIEW.md` from the automation's own repo into `Automation`,
+  `ROIEntry`, `AutomationPage`, `Connection`, `AutomationTodoItem`, and
   `ReviewLogEntry` rows, with specific clear-vs-preserve rules per file (e.g. an empty
   `## Pages` section only clears stale pages when `SUMMARY.md` was actually fetched).
+  `dashboard/SECURITY_REVIEW.md` is a record of the last time someone ran Claude Code's
+  built-in `/security-review` command against the repo (diff-scoped, not a full-codebase
+  audit) — its absence sets `Automation.security_review_at` to `None`, which
+  `Automation.security_review_state` (`src/models.py`) surfaces honestly as "не
+  перевірено" rather than defaulting to "clean"; nothing in this app can trigger that
+  command itself, sync only ever reads whatever record a human/Claude session already
+  wrote and pushed.
   `dashboard/SUMMARY.md`'s `## Skills` bullet list links the automation against the
   skills library (`/skills`) by exact name match — unlike `## Departments`, an
   unmatched skill name is skipped with a warning rather than auto-creating a bare

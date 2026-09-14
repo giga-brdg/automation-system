@@ -4,10 +4,17 @@
 Covers this repo's app, as four separate surfaces:
 - the login/registration flow (`src/app.py`'s `register()`/`login()`/`confirm()`);
 - the Telegram admin-approval bot (`src/telegram_bot.py`);
-- the API-key-authenticated automation-sync endpoint (`POST
-  /api/automations/<slug>/sync`, `src/app.py` lines ~556-570) — a third,
-  machine-facing auth surface, separate from the session-cookie login above,
-  keyed off the per-user `api_key` column in `src/models.py`;
+- the API-key-authenticated automation-sync endpoints (`POST
+  /api/automations/<slug>/sync`, `src/app.py` lines ~867-889, and its read-only
+  counterpart `GET /api/automations/<slug>/stage0-answers`, lines ~962-989) — a
+  third, machine-facing auth surface, separate from the session-cookie login
+  above, keyed off the per-user `api_key` column in `src/models.py`. The GET
+  endpoint reuses the exact same auth chain as the POST one (key → owner
+  lookup → role + `is_approved` → ownership-or-admin check) rather than
+  introducing a second one — it exists so `stage-0-supplax`'s bootstrap step
+  can pull whatever Stage 0 interview answers (`Automation.stage0_answers`,
+  filled at `/automations/<slug>/stage0`) were already entered in the
+  dashboard, instead of asking about them again live;
 - the GitHub-sync integration (`src/github_sync.py`, invoked by
   `/automations/import-github` and `/automations/<slug>/resync` in
   `src/app.py`). This is **not** part of the login/registration flow despite
