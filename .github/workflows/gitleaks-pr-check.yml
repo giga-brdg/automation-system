@@ -1,0 +1,22 @@
+name: Gitleaks PR Check
+
+# Fast, PR-triggered secret scan - closes most of the "up to 24h exposure
+# window" gap the daily scheduled scan has on its own (see
+# docs/adr/0003-self-hosted-scanners-for-secrets-and-code.md). Not a
+# replacement for the daily scan - this only covers PRs, not direct pushes.
+
+on:
+  pull_request:
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+      - name: Scan for secrets
+        run: gitleaks detect --source . --no-git --verbose
