@@ -12,6 +12,18 @@ chosen). The staging+prod split named in `PIPELINE.md` §7 was a bootstrap-time
 judgment call, never confirmed by the user and never actually built — treat
 "staging" as aspirational, not a real environment, until it exists.
 
+## Frontend assets
+The UI is Bootstrap 5 / Able Pro (Phoenixcoded), vendored into `src/static/
+vendor/able-pro/` from `github.com/giga-brdg/Design-system` @
+`05ddaf1e70a3f832da268c7b28bc6c212dfb7f54`. Able Pro is commercially licensed,
+internal Supplax use only. Don't make this repo's static assets public or
+redistribute them. Brand palette and small first-party helpers live in
+`src/static/supplax-overrides.css`. See `src/static/vendor/able-pro/VENDOR.md`
+for the exact file list and how to re-vendor/re-retint after pulling a newer
+commit of the design-system repo — it's not a plain asset copy, since
+`css/style.css`/`css/style-preset.css` are recompiled from that repo's own
+Sass with this app's brand colors.
+
 ## Deploy Steps
 Currently deployed to Railway (PaaS). This is the practice as it actually happened,
 reconstructed from the repo, not a pipeline anyone documented before building it —
@@ -127,6 +139,12 @@ command lives in Railway's project settings, not in git:
   reference variables (`${{Postgres.DATABASE_URL}}` / `${{web.GITHUB_TOKEN}}`), not
   literal copies, so rotating either on its source service updates this one too.
   `AUTOMATION_SYNC_OWNER_EMAIL` is set directly on this service.
+  The same scan also runs on demand via the "Оновити з GitHub" button on
+  `/automations` (`automations_sync_github_org` in `src/app.py`) for whoever
+  doesn't want to wait for the next 03:00 UTC run - it needs `GITHUB_SYNC_ORG`
+  set on the `web` service too (same value, `giga-brdg`), which isn't one of
+  the reference variables above since `web` doesn't otherwise need to know
+  the org name.
 - **Still genuinely undecided / undocumented**: a real IaC setup for
   `infra/staging`/`infra/prod`; the actual deploy trigger (push-to-`main`
   auto-deploy via Railway's GitHub integration vs. `railway up` vs. a manual

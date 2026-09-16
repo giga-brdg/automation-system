@@ -1,0 +1,68 @@
+/* Supplax brand bridge over Able Pro (see src/static/vendor/able-pro/VENDOR.md).
+   Loaded after the vendored CSS. Never edit vendor files - add overrides here
+   instead, mirroring that repo's own "customizations imported last" rule.
+
+   The primary/success/warning/danger palette itself is NOT overridden here -
+   Bootstrap bakes those as literal per-component values at Sass compile time
+   (e.g. .btn-primary sets --bs-btn-bg: #4680ff directly, it doesn't read
+   --bs-primary at runtime), so a runtime custom-property override can't
+   retint buttons/badges/alerts. Instead, vendor/able-pro/css/{style,
+   style-preset}.css were recompiled from the design-system repo's own Sass
+   with $primary/$success/$warning/$danger (and the matching -text/-bg-subtle/
+   -border-subtle tokens) set to this app's original OKLCH brand hues -
+   see that repo's src/assets/scss/settings/_bootstrap-variables.scss and
+   _theme-variables.scss. Re-run that recompile after re-vendoring a newer
+   commit; don't try to patch color in here instead.
+
+   What CAN be corrected at runtime are these neutral/surface tokens, which
+   Able Pro only ever sets as plain :root values (not baked per-component) -
+   its defaults are a cool light gray, this app's brand is a warm cream.
+   No !important needed: this file is loaded after style-preset.css (see
+   base.html), and both declare these on the same :root selector, so plain
+   cascade order already wins. */
+:root {
+  --bs-body-bg: #fcf8f3;
+  --bs-body-color: #1f1a13;
+  --pc-heading-color: #1f1a13;
+
+  /* sidebar <- surface-alt / border / text / accent-soft */
+  --pc-sidebar-background: #f6f1eb;
+  --pc-sidebar-color: #645c51;
+  --pc-sidebar-caption-color: #645c51;
+  --pc-sidebar-border: 1px solid #e3ddd5;
+  --pc-sidebar-user-background: #fce6d9;
+  --pc-sidebar-shadow: none;
+
+  /* header tokens set for consistency even though pc-header itself isn't used */
+  --pc-header-background: #fcf8f3;
+  --pc-header-color: #1f1a13;
+
+  --pc-card-box-shadow: 0 6px 20px rgba(31, 26, 19, 0.08);
+}
+
+/* Able Pro has no generic .card:hover affordance (checked: the only
+   .card:hover rules in the vendored CSS are scoped to unrelated components -
+   a header notification dropdown and the file manager). The old design used
+   a clickable-card hover lift for automation tiles (`<a class="card">` in
+   automations_list.html/automator_profile.html); restore it, scoped to
+   anchor cards only so plain content-panel cards stay static. */
+a.card:hover {
+  box-shadow: 0 10px 28px rgba(31, 26, 19, 0.12);
+  border-color: #d4cdc3;
+}
+
+/* Able Pro's .pc-container assumes a 74px pc-header above it (top: 74px;
+   min-height: calc(100vh - 135px)). This app deliberately has no pc-header
+   (see the redesign plan) - drop that reserved offset. */
+.pc-container {
+  top: 0;
+  min-height: 100vh;
+}
+
+/* Small first-party helpers kept from the pre-redesign CSS - plain
+   typographic/layout classes with no Bootstrap-name collision, so there was
+   no reason to reinvent them with utility classes at every call site. */
+.sora { font-family: "Inter var", "Inter", system-ui, sans-serif; }
+.page-title { font-size: 21px; font-weight: 600; }
+.page-subtitle { font-size: 13.5px; color: #645c51; margin-top: 4px; }
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }

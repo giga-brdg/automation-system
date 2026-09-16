@@ -17,8 +17,12 @@ the Telegram bot bullet below for which process boundary actually matters), and
 `extensions.py` — just two lines, `db = SQLAlchemy()` and `login_manager =
 LoginManager()`, the singletons every other module imports rather than constructing
 their own. The view layer lives outside that list, in `src/templates/` (the Jinja
-templates) and `src/static/style.css` (the oklch design-token system `models.py`'s
-`Status.dot_color` points back to).
+templates), `src/static/vendor/able-pro/` (the Bootstrap 5 / Able Pro design
+system this app is built on, vendored from `github.com/giga-brdg/Design-system`,
+internal-only license, see that folder's `VENDOR.md`), and `src/static/
+supplax-overrides.css` (this app's brand palette and small first-party
+helpers layered on top; `models.py`'s `Status.bs_variant` returns a Bootstrap
+badge variant name that templates combine with that stylesheet's classes).
 
 ## Components
 - **Web app (Flask + Jinja)** — server-rendered pages for the registry, ROI views, and

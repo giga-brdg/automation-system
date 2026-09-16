@@ -2,6 +2,7 @@ import io
 import os
 import re
 import secrets
+import threading
 import zipfile
 from datetime import datetime, timedelta
 from functools import wraps
@@ -92,12 +93,12 @@ def create_app():
 
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
-        flash("Форма застаріла або сесія скінчилась — спробуй ще раз.")
+        flash("Форма застаріла або сесія скінчилась — спробуй ще раз.", "error")
         return redirect(request.referrer or url_for("index"))
 
     @app.errorhandler(RateLimitExceeded)
     def handle_rate_limit_error(e):
-        flash("Забагато спроб входу — зачекай хвилину і спробуй ще раз.")
+        flash("Забагато спроб входу — зачекай хвилину і спробуй ще раз.", "error")
         return render_template("login.html"), 429
 
     @login_manager.user_loader
@@ -132,7 +133,8 @@ def automator_required(view):
     return wrapped
 
 
-def sync_automation_from_github(automation, repo_url, owner_id, form_status, selected_dept_ids, slug=None):
+def sync_automation_from_github(automation, repo_url, owner_id, form_status, selected_dept_ids, slug=None,
+                                 prefetched_summary_text=None):
     """Shared by the first-time import form and the per-automation
     'Оновити з GitHub' button: fetch README.md/dashboard/ROI.md/
     dashboard/SUMMARY.md and apply them to `automation` (a new unsaved
@@ -142,7 +144,11 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
     keeps its own real ROI/functionality writeups elsewhere (docs/
     roi_explained.md, docs/functions.md) and regenerates these two from
     them. Raises on a GitHub fetch failure - callers turn that into a
-    flash message."""
+    flash message.
+
+    `prefetched_summary_text`: pass this when the caller already fetched
+    dashboard/SUMMARY.md itself (run_github_org_sync does, to decide
+    pending-vs-synced before calling here) so this doesn't fetch it again."""
     parsed = github_sync.parse_repo_url(repo_url)
     if not parsed:
         raise ValueError("Не схоже на посилання на GitHub-репозиторій "
@@ -152,7 +158,8 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
     branch = github_sync.default_branch(owner_gh, repo)
     readme_text = github_sync.fetch_raw_file(owner_gh, repo, "README.md", branch)
     roi_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/ROI.md", branch)
-    summary_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/SUMMARY.md", branch)
+    summary_text = (prefetched_summary_text if prefetched_summary_text is not None
+                     else github_sync.fetch_raw_file(owner_gh, repo, "dashboard/SUMMARY.md", branch))
     functions_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/functions.md", branch)
     backlog_text = github_sync.fetch_raw_file(owner_gh, repo, "backlog/BACKLOG.md", branch)
     security_review_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/SECURITY_REVIEW.md", branch)
@@ -329,6 +336,114 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
     return automation, warnings
 
 
+_github_org_sync_lock = threading.Lock()
+
+
+def run_github_org_sync(app, owner):
+    """Shared by the `sync-github-org` CLI command (Railway's daily cron) and
+    the "Оновити з GitHub" button on /automations (an on-demand run of the
+    exact same logic, for when someone doesn't want to wait for 03:00 UTC).
+    Returns a human-readable Ukrainian summary line; raises ValueError if
+    AUTOMATION_SYNC_OWNER_EMAIL isn't set to a real Automator/Admin (neither
+    caller has a logged-in user to fall back to for newly-discovered
+    automations), or if a scan is already running in this process (the CLI
+    cron and the button both end up calling this, and there's nothing else
+    stopping someone from clicking the button twice while the first click's
+    scan - up to one GitHub round-trip per repo - is still in flight)."""
+    if not _github_org_sync_lock.acquire(blocking=False):
+        raise ValueError(f"Синхронізація «{owner}» вже виконується — зачекай, поки попередній запуск завершиться.")
+    try:
+        owner_email = os.environ.get("AUTOMATION_SYNC_OWNER_EMAIL")
+        default_owner = User.query.filter_by(email=owner_email).first() if owner_email else None
+        if default_owner is None:
+            raise ValueError("AUTOMATION_SYNC_OWNER_EMAIL не задано або не знайдено такого користувача — "
+                              "потрібен існуючий Automator/Admin для щойно знайдених автоматизацій.")
+
+        repos = github_sync.list_org_repos(owner)
+
+        imported = updated = pending_count = skipped = failed = 0
+        for repo in repos:
+            repo_url = f"https://github.com/{owner}/{repo['name']}"
+            if repo["archived"]:
+                skipped += 1
+                continue
+            try:
+                summary_text = github_sync.fetch_raw_file(
+                    owner, repo["name"], "dashboard/SUMMARY.md", repo["default_branch"])
+                if summary_text is None:
+                    # No dashboard/SUMMARY.md doesn't prove this is a real
+                    # automation - some repos in the org genuinely aren't one
+                    # (an SDK package, a skills workspace). But guessing that
+                    # from repo content is unreliable in the other direction too
+                    # (a real product with no PIPELINE.md looks the same as an
+                    # SDK from here) - a first pass here only tracked repos with
+                    # PIPELINE.md and missed a real one without it. Track every
+                    # non-archived repo instead, and let an automator dismiss
+                    # whatever turns out not to be an automation - see the
+                    # dismiss route below, which this loop never overrides.
+                    pipeline_text = github_sync.fetch_raw_file(
+                        owner, repo["name"], "PIPELINE.md", repo["default_branch"])
+                    missing = ("dashboard/SUMMARY.md (стейдж-0 пройдено)" if pipeline_text is not None
+                               else "dashboard/SUMMARY.md (стейдж-0 ще не проходив)")
+                    existing_pending = PendingAutomation.query.filter_by(repo_url=repo_url).first()
+                    if existing_pending is None:
+                        existing_pending = PendingAutomation(
+                            slug=repo["name"].lower(), name=repo["name"], repo_url=repo_url,
+                            missing=missing)
+                        db.session.add(existing_pending)
+                    else:
+                        existing_pending.missing = missing
+                    existing_pending.last_seen_at = _now()
+                    db.session.commit()
+                    pending_count += 1
+                    continue
+
+                # This repo now has dashboard/SUMMARY.md - if an earlier run
+                # tracked it as pending, it just graduated to a real automation,
+                # so that placeholder row no longer belongs on the "incomplete"
+                # list.
+                PendingAutomation.query.filter_by(repo_url=repo_url).delete()
+
+                slug = repo["name"].lower()
+                # Match by repo_url first - an automation registered by hand or
+                # via the single-repo import form almost never has slug ==
+                # repo-name-lowercased (a human picks their own slug), so
+                # matching on slug alone would silently create a duplicate
+                # automation for a repo that's already registered under a
+                # different slug. Only fall back to slug for a repo this same
+                # command already created on an earlier run (which does use
+                # this exact convention).
+                existing = (Automation.query.filter_by(repo_url=repo_url).first()
+                            or Automation.query.filter_by(slug=slug).first())
+                owner_id = existing.owner_id if existing else default_owner.id
+                sync_automation_from_github(existing, repo_url, owner_id, "", [], slug=slug,
+                                             prefetched_summary_text=summary_text)
+                db.session.commit()
+                if existing:
+                    updated += 1
+                else:
+                    imported += 1
+            except Exception:
+                # Anything above - a fetch timeout, a transient GitHub error,
+                # a DB constraint failure - is this one repo's problem, not a
+                # reason to abort the whole org scan (and definitely not the
+                # same thing as list_org_repos itself failing, which is what
+                # both callers report if this propagates instead of being
+                # caught here). Repos already committed earlier in this loop
+                # stay committed either way.
+                db.session.rollback()
+                app.logger.exception("sync-github-org: failed processing %s/%s", owner, repo["name"])
+                failed += 1
+                continue
+        summary = (f"{owner}: {imported} нових, {updated} оновлено, {pending_count} неповних "
+                   f"(немає dashboard/SUMMARY.md), {skipped} архівованих пропущено.")
+        if failed:
+            summary += f" {failed} репозиторіїв пропущено через помилку (див. логи)."
+        return summary
+    finally:
+        _github_org_sync_lock.release()
+
+
 def register_routes(app):
     @app.route("/")
     def index():
@@ -343,14 +458,14 @@ def register_routes(app):
             user = User.query.filter_by(email=email).first()
             if user and user.check_password(password):
                 if not user.is_confirmed:
-                    flash("Спочатку підтверди код, який тобі назве адміністратор.")
+                    flash("Спочатку підтверди код, який тобі назве адміністратор.", "info")
                     return redirect(url_for("confirm", email=email))
                 if not user.is_approved:
-                    flash("Код підтверджено, але адміністратор ще не надав доступ у Telegram-боті.")
+                    flash("Код підтверджено, але адміністратор ще не надав доступ у Telegram-боті.", "info")
                     return render_template("login.html")
                 login_user(user)
                 return redirect(url_for("automations_list"))
-            flash("Невірний email або пароль.")
+            flash("Невірний email або пароль.", "error")
         return render_template("login.html")
 
     @app.route("/register", methods=["GET", "POST"])
@@ -361,15 +476,15 @@ def register_routes(app):
             password = request.form.get("password", "")
             password_confirm = request.form.get("password_confirm", "")
             if not email or not name or not password:
-                flash("Заповни всі поля.")
+                flash("Заповни всі поля.", "error")
                 return render_template("register.html")
             if password != password_confirm:
-                flash("Паролі не збігаються.")
+                flash("Паролі не збігаються.", "error")
                 return render_template("register.html")
 
             existing = User.query.filter_by(email=email).first()
             if existing and (existing.is_confirmed or existing.is_approved):
-                flash("Акаунт з такою поштою вже існує — увійди звичайним способом.")
+                flash("Акаунт з такою поштою вже існує — увійди звичайним способом.", "error")
                 return render_template("register.html")
 
             user = existing or User(email=email, role=Role.VIEWER)
@@ -391,9 +506,9 @@ def register_routes(app):
             )
             if not sent:
                 flash("Реєстрацію збережено, але не вдалося сповістити адміністратора в Telegram — "
-                      "звернись до нього напряму.")
+                      "звернись до нього напряму.", "warning")
             else:
-                flash("Реєстрацію подано. Введи код підтвердження, який тобі назве адміністратор.")
+                flash("Реєстрацію подано. Введи код підтвердження, який тобі назве адміністратор.", "info")
             return redirect(url_for("confirm", email=email))
         return render_template("register.html")
 
@@ -406,9 +521,9 @@ def register_routes(app):
             code = request.form.get("code", "").strip()
             user = User.query.filter_by(email=email).first()
             if not user or not user.pending_code:
-                flash("Акаунт не знайдено, або код уже використано.")
+                flash("Акаунт не знайдено, або код уже використано.", "error")
             elif user.pending_code_expires_at and user.pending_code_expires_at < _now().replace(tzinfo=None):
-                flash("Код застарів — попроси адміністратора зареєструвати тебе ще раз.")
+                flash("Код застарів — попроси адміністратора зареєструвати тебе ще раз.", "error")
             elif code != user.pending_code:
                 # A 6-digit code has only a million possible values - without
                 # this, nothing stops guessing all of them inside the
@@ -421,17 +536,17 @@ def register_routes(app):
                     user.pending_code = None
                     user.pending_code_expires_at = None
                     db.session.commit()
-                    flash("Забагато невірних спроб — код анульовано. Зареєструйся ще раз, щоб отримати новий.")
+                    flash("Забагато невірних спроб — код анульовано. Зареєструйся ще раз, щоб отримати новий.", "error")
                 else:
                     db.session.commit()
-                    flash("Невірний код.")
+                    flash("Невірний код.", "error")
             else:
                 user.is_confirmed = True
                 user.pending_code = None
                 user.pending_code_expires_at = None
                 user.pending_code_attempts = 0
                 db.session.commit()
-                flash("Акаунт підтверджено. Очікуй, поки адміністратор надасть доступ у Telegram-боті.")
+                flash("Акаунт підтверджено. Очікуй, поки адміністратор надасть доступ у Telegram-боті.", "success")
                 return redirect(url_for("login"))
         return render_template("confirm.html", email=email)
 
@@ -473,6 +588,28 @@ def register_routes(app):
             pending=pending,
         )
 
+    @app.route("/automations/sync-github-org", methods=["POST"])
+    @login_required
+    @automator_required
+    def automations_sync_github_org():
+        """The "Оновити з GitHub" button on /automations - runs the exact
+        same org-wide scan as the `sync-github-org` cron (Railway only fires
+        it once a day, 03:00 UTC), on demand, for whoever doesn't want to
+        wait for a newly-created repo or a just-added dashboard/SUMMARY.md
+        to show up tomorrow."""
+        owner = os.environ.get("GITHUB_SYNC_ORG")
+        if not owner:
+            flash("GITHUB_SYNC_ORG не задано в .env — не знаю, яку GitHub-організацію сканувати.", "error")
+            return redirect(url_for("automations_list"))
+        try:
+            flash(run_github_org_sync(app, owner), "success")
+        except ValueError as e:
+            flash(str(e), "error")
+        except Exception:
+            app.logger.exception("automations_sync_github_org: failed for %s", owner)
+            flash(f"Не вдалося отримати список репозиторіїв «{owner}».", "error")
+        return redirect(url_for("automations_list"))
+
     def apply_manual_form(automation, form):
         automation.name = form["name"].strip()
         automation.one_liner = form.get("one_liner", "").strip()
@@ -502,7 +639,7 @@ def register_routes(app):
             if dupe:
                 flash(f"Увага: project ID {automation.ai_usage_project_id} в ai-usage-collector вже "
                       f"прив'язаний до «{dupe.name}» — витрати й алерти по бюджету рахуватимуться "
-                      f"однаково для обох карток.")
+                      f"однаково для обох карток.", "warning")
         automation.departments = Department.query.filter(
             Department.id.in_(form.getlist("departments"))).all()
         automation.skills = Skill.query.filter(Skill.id.in_(form.getlist("skills"))).all()
@@ -568,7 +705,7 @@ def register_routes(app):
             automation.stage0_answers = stage0_questions.collect_answers(request.form)
             db.session.commit()
             n = stage0_questions.answered_phase_count(automation.stage0_answers)
-            flash(f"Відповіді Stage 0 збережено ({n}/9 фаз).")
+            flash(f"Відповіді Stage 0 збережено ({n}/9 фаз).", "success")
             return redirect(url_for("automation_detail", slug=automation.slug))
         return render_template("stage0_form.html", automation=automation,
                                 phases=stage0_questions.PHASES,
@@ -585,7 +722,7 @@ def register_routes(app):
             slug = request.form.get("slug", "").strip() or None
             existing = Automation.query.filter_by(slug=slug).first() if slug else None
             if existing and not current_user.can_manage(existing):
-                flash("Ця автоматизація вже зареєстрована іншим автоматизатором.")
+                flash("Ця автоматизація вже зареєстрована іншим автоматизатором.", "error")
                 return redirect(url_for("automation_import_github"))
             owner_id = int(request.form["owner_id"]) if current_user.is_admin else current_user.id
             try:
@@ -593,17 +730,17 @@ def register_routes(app):
                     existing, repo_url, owner_id,
                     request.form.get("status") or "", request.form.getlist("departments"), slug=slug)
             except ValueError as e:
-                flash(str(e))
+                flash(str(e), "error")
                 return redirect(url_for("automation_import_github"))
             except Exception:
                 db.session.rollback()
                 app.logger.exception("GitHub import failed for %s", repo_url)
                 flash("Не вдалося звернутися до GitHub — перевір посилання і чи репозиторій публічний "
-                      "(або що GITHUB_TOKEN в .env дійсний, якщо приватний).")
+                      "(або що GITHUB_TOKEN в .env дійсний, якщо приватний).", "error")
                 return redirect(url_for("automation_import_github"))
 
             db.session.commit()
-            flash(f"Синхронізовано з {repo_url}." + (" " + " ".join(warnings) if warnings else ""))
+            flash(f"Синхронізовано з {repo_url}." + (" " + " ".join(warnings) if warnings else ""), "success")
             return redirect(url_for("automation_detail", slug=automation.slug))
 
         prefill_slug = request.args.get("slug", "")
@@ -621,7 +758,7 @@ def register_routes(app):
             abort(403)
         repo_url = automation.repo_url
         if not repo_url:
-            flash("У цієї автоматизації не вказано посилання на репозиторій.")
+            flash("У цієї автоматизації не вказано посилання на репозиторій.", "error")
             return redirect(url_for("automation_detail", slug=slug))
         try:
             automation, warnings = sync_automation_from_github(
@@ -634,11 +771,11 @@ def register_routes(app):
             # a second, unrelated PendingRollbackError that masks the real one.
             db.session.rollback()
             app.logger.exception("GitHub resync failed for %s", repo_url)
-            flash("Не вдалося звернутися до GitHub — перевір, чи репозиторій усе ще доступний.")
+            flash("Не вдалося звернутися до GitHub — перевір, чи репозиторій усе ще доступний.", "error")
             return redirect(url_for("automation_detail", slug=slug))
 
         db.session.commit()
-        flash("Оновлено з GitHub." + (" " + " ".join(warnings) if warnings else ""))
+        flash("Оновлено з GitHub." + (" " + " ".join(warnings) if warnings else ""), "success")
         return redirect(url_for("automation_detail", slug=automation.slug))
 
     @app.route("/automations/pending/<int:pending_id>/dismiss", methods=["POST"])
@@ -652,7 +789,7 @@ def register_routes(app):
         pending = PendingAutomation.query.get_or_404(pending_id)
         pending.dismissed = True
         db.session.commit()
-        flash(f"«{pending.name}» приховано зі списку неповних автоматизацій.")
+        flash(f"«{pending.name}» приховано зі списку неповних автоматизацій.", "success")
         return redirect(url_for("automations_list"))
 
     @app.route("/automations/<slug>")
@@ -676,9 +813,9 @@ def register_routes(app):
         dept = Department.query.get_or_404(dept_id)
         new_name = request.form.get("name", "").strip()
         if not new_name:
-            flash("Назва відділу не може бути порожньою.")
+            flash("Назва відділу не може бути порожньою.", "error")
         elif Department.query.filter(Department.name == new_name, Department.id != dept_id).first():
-            flash(f"Відділ з назвою «{new_name}» вже існує — злий їх через об'єднання нижче, а не перейменування.")
+            flash(f"Відділ з назвою «{new_name}» вже існує — злий їх через об'єднання нижче, а не перейменування.", "error")
         else:
             dept.name = new_name
             db.session.commit()
@@ -691,7 +828,7 @@ def register_routes(app):
         from_dept = Department.query.get_or_404(int(request.form["from_id"]))
         into_dept = Department.query.get_or_404(int(request.form["into_id"]))
         if from_dept.id == into_dept.id:
-            flash("Неможливо об'єднати відділ сам із собою.")
+            flash("Неможливо об'єднати відділ сам із собою.", "error")
             return redirect(url_for("departments_list"))
         for automation in list(from_dept.automations):
             if into_dept not in automation.departments:
@@ -699,7 +836,7 @@ def register_routes(app):
             automation.departments.remove(from_dept)
         db.session.delete(from_dept)
         db.session.commit()
-        flash(f"«{from_dept.name}» об'єднано з «{into_dept.name}».")
+        flash(f"«{from_dept.name}» об'єднано з «{into_dept.name}».", "success")
         return redirect(url_for("departments_list"))
 
     @app.route("/departments/<int:dept_id>/delete", methods=["POST"])
@@ -709,7 +846,7 @@ def register_routes(app):
         dept = Department.query.get_or_404(dept_id)
         if dept.automations:
             flash(f"«{dept.name}» використовується у {len(dept.automations)} автоматизаціях — "
-                  f"спочатку об'єднай з іншим відділом, потім видаляй.")
+                  f"спочатку об'єднай з іншим відділом, потім видаляй.", "error")
         else:
             db.session.delete(dept)
             db.session.commit()
@@ -734,7 +871,7 @@ def register_routes(app):
             abort(403)
         current_user.api_key = secrets.token_hex(32)
         db.session.commit()
-        flash(f"Новий API-ключ: {current_user.api_key} — збережи його зараз, більше він ніде не покажеться.")
+        flash(f"Новий API-ключ: {current_user.api_key} — збережи його зараз, більше він ніде не покажеться.", "success")
         return redirect(url_for("automator_profile", user_id=user_id))
 
     @app.route("/skills")
@@ -765,10 +902,10 @@ def register_routes(app):
             files = github_sync.fetch_directory_tree(owner_gh, repo, path or "", branch)
         except Exception:
             app.logger.exception("Skill download failed for %s", skill.repo_url)
-            flash("Не вдалося завантажити файли скіла з GitHub.")
+            flash("Не вдалося завантажити файли скіла з GitHub.", "error")
             return redirect(url_for("skills_library"))
         if not files:
-            flash("У цьому скілі не знайдено файлів для завантаження.")
+            flash("У цьому скілі не знайдено файлів для завантаження.", "error")
             return redirect(url_for("skills_library"))
 
         buf = io.BytesIO()
@@ -889,13 +1026,13 @@ def register_routes(app):
                 else:
                     skill = sync_skill_from_github(repo_url)
             except ValueError as e:
-                flash(str(e))
+                flash(str(e), "error")
                 return redirect(url_for("skill_import_github"))
             except Exception:
                 db.session.rollback()
                 app.logger.exception("GitHub import failed for skill(s) %s", repo_url)
                 flash("Не вдалося звернутися до GitHub — перевір посилання і чи репозиторій публічний "
-                      "(або що GITHUB_TOKEN в .env дійсний, якщо приватний).")
+                      "(або що GITHUB_TOKEN в .env дійсний, якщо приватний).", "error")
                 return redirect(url_for("skill_import_github"))
 
             db.session.commit()
@@ -906,9 +1043,9 @@ def register_routes(app):
                     msg = "Жодного скіла не імпортовано."
                 if skipped:
                     msg += " Пропущено: " + ", ".join(skipped) + "."
-                flash(msg)
+                flash(msg, "success" if imported else "warning")
             else:
-                flash(f"Синхронізовано скіл «{skill.name}» з {repo_url}.")
+                flash(f"Синхронізовано скіл «{skill.name}» з {repo_url}.", "success")
             return redirect(url_for("skills_library"))
         return render_template("skill_import.html")
 
@@ -1180,12 +1317,16 @@ def register_cli(app):
         click.echo("Migrated: created pending_automation table.")
 
     @app.cli.command("sync-github-org")
-    @click.argument("owner")
+    @click.argument("owner", required=False)
     def sync_github_org(owner):
         """One-shot bulk sync of every repo under a GitHub org or user
         account (`owner`, e.g. "giga-brdg") that has a dashboard/SUMMARY.md -
         meant to be invoked by a Railway Cron Schedule, same convention as
-        check-token-usage below. NOT run continuously, and NOT the same bar
+        check-token-usage below. `owner` defaults to the GITHUB_SYNC_ORG env
+        var (the same one the "Оновити з GitHub" web button reads) so the
+        org name has one source of truth instead of two config surfaces
+        that can drift apart - pass it explicitly only to sync a different
+        org one-off. NOT run continuously, and NOT the same bar
         as the single-repo /automations/import-github form: a repo with no
         dashboard/SUMMARY.md never becomes a real Automation here (no
         README-only stub), because nothing distinguishes a real automation
@@ -1205,86 +1346,20 @@ def register_cli(app):
         owner on every re-run; a brand-new one is assigned to
         AUTOMATION_SYNC_OWNER_EMAIL, which must name an existing
         Automator/Admin - there's no logged-in user to fall back to."""
-        owner_email = os.environ.get("AUTOMATION_SYNC_OWNER_EMAIL")
-        default_owner = User.query.filter_by(email=owner_email).first() if owner_email else None
-        if default_owner is None:
-            click.echo("AUTOMATION_SYNC_OWNER_EMAIL не задано або не знайдено такого користувача — "
-                        "потрібен існуючий Automator/Admin для щойно знайдених автоматизацій.")
+        owner = owner or os.environ.get("GITHUB_SYNC_ORG")
+        if not owner:
+            click.echo("Вкажи owner аргументом, або задай GITHUB_SYNC_ORG у .env.")
             return
-
         try:
-            repos = github_sync.list_org_repos(owner)
+            summary = run_github_org_sync(app, owner)
+        except ValueError as e:
+            click.echo(str(e))
+            return
         except Exception:
             app.logger.exception("sync-github-org: could not list repos for %s", owner)
             click.echo(f"Не вдалося отримати список репозиторіїв «{owner}».")
             return
-
-        imported = updated = pending_count = skipped = 0
-        for repo in repos:
-            repo_url = f"https://github.com/{owner}/{repo['name']}"
-            if repo["archived"]:
-                skipped += 1
-                continue
-            summary_text = github_sync.fetch_raw_file(
-                owner, repo["name"], "dashboard/SUMMARY.md", repo["default_branch"])
-            if summary_text is None:
-                # No dashboard/SUMMARY.md doesn't prove this is a real
-                # automation - some repos in the org genuinely aren't one
-                # (an SDK package, a skills workspace). But guessing that
-                # from repo content is unreliable in the other direction too
-                # (a real product with no PIPELINE.md looks the same as an
-                # SDK from here) - a first pass here only tracked repos with
-                # PIPELINE.md and missed a real one without it. Track every
-                # non-archived repo instead, and let an automator dismiss
-                # whatever turns out not to be an automation - see the
-                # dismiss route below, which this loop never overrides.
-                pipeline_text = github_sync.fetch_raw_file(
-                    owner, repo["name"], "PIPELINE.md", repo["default_branch"])
-                missing = ("dashboard/SUMMARY.md (стейдж-0 пройдено)" if pipeline_text is not None
-                           else "dashboard/SUMMARY.md (стейдж-0 ще не проходив)")
-                existing_pending = PendingAutomation.query.filter_by(repo_url=repo_url).first()
-                if existing_pending is None:
-                    existing_pending = PendingAutomation(
-                        slug=repo["name"].lower(), name=repo["name"], repo_url=repo_url,
-                        missing=missing)
-                    db.session.add(existing_pending)
-                else:
-                    existing_pending.missing = missing
-                existing_pending.last_seen_at = _now()
-                db.session.commit()
-                pending_count += 1
-                continue
-
-            # This repo now has dashboard/SUMMARY.md - if an earlier run
-            # tracked it as pending, it just graduated to a real automation,
-            # so that placeholder row no longer belongs on the "incomplete"
-            # list.
-            PendingAutomation.query.filter_by(repo_url=repo_url).delete()
-
-            slug = repo["name"].lower()
-            # Match by repo_url first - an automation registered by hand or
-            # via the single-repo import form almost never has slug ==
-            # repo-name-lowercased (a human picks their own slug), so
-            # matching on slug alone would silently create a duplicate
-            # automation for a repo that's already registered under a
-            # different slug. Only fall back to slug for a repo this same
-            # command already created on an earlier run (which does use
-            # this exact convention).
-            existing = (Automation.query.filter_by(repo_url=repo_url).first()
-                        or Automation.query.filter_by(slug=slug).first())
-            owner_id = existing.owner_id if existing else default_owner.id
-            try:
-                sync_automation_from_github(existing, repo_url, owner_id, "", [], slug=slug)
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
-                app.logger.exception("sync-github-org: failed syncing %s/%s", owner, repo["name"])
-                skipped += 1
-                continue
-            imported += 0 if existing else 1
-            updated += 1 if existing else 0
-        click.echo(f"{owner}: {imported} нових, {updated} оновлено, {pending_count} неповних "
-                    f"(немає dashboard/SUMMARY.md), {skipped} архівованих пропущено.")
+        click.echo(summary)
 
     @app.cli.command("check-token-usage")
     def check_token_usage():

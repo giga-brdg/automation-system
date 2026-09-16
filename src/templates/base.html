@@ -1,66 +1,92 @@
+{% import "_ui_helpers.html" as ui %}
 <!doctype html>
 <html lang="uk">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Портфель автоматизацій{% endblock %} — Supplax</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/able-pro/fonts/inter/inter.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/able-pro/fonts/tabler-icons.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/able-pro/css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/able-pro/css/style-preset.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='supplax-overrides.css') }}">
 </head>
-<body>
+<body data-pc-preset="preset-1" data-pc-sidebar-caption="true" data-pc-layout="vertical" data-pc-direction="ltr" data-pc-theme_contrast="" data-pc-theme="light">
   {% if current_user.is_authenticated %}
-  <div class="app-shell">
-    <aside class="sidebar">
-      <a class="sidebar-brand" href="{{ url_for('automations_list') }}" style="text-decoration:none;">
-        <svg class="sidebar-brand-mark" width="26" height="26" viewBox="0 0 24 24" fill="none">
-          <circle cx="9" cy="9" r="6.5" stroke="oklch(62% 0.11 55)" stroke-width="1.6"/>
-          <circle cx="15" cy="15" r="6.5" stroke="oklch(22% 0.015 75)" stroke-width="1.6" opacity="0.3"/>
-        </svg>
-        <span class="sidebar-brand-text sora">Automation<br>ROI</span>
-      </a>
-      <nav class="sidebar-nav">
-        <a href="{{ url_for('automations_list') }}" class="{{ 'active' if active_nav == 'registry' }}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/>
-            <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/>
-          </svg>
-          Автоматизації
+  <nav class="pc-sidebar">
+    <div class="navbar-wrapper">
+      <div class="m-header">
+        <a class="b-brand text-primary" href="{{ url_for('automations_list') }}">
+          <i class="ti ti-apps f-24 me-1"></i><span class="fw-bold">Automation ROI</span>
         </a>
-        <a href="{{ url_for('skills_library') }}" class="{{ 'active' if active_nav == 'skills' }}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="14.5" y="4" width="6.5" height="6.5" rx="1.5"/>
-            <rect x="9" y="14" width="6.5" height="6.5" rx="1.5"/>
-          </svg>
-          Бібліотека скіллів
-        </a>
-        {% if current_user.is_admin %}
-        <a href="{{ url_for('departments_list') }}" class="{{ 'active' if active_nav == 'departments' }}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/>
-          </svg>
-          Відділи
-        </a>
-        {% endif %}
-      </nav>
-      <div class="sidebar-footer">
-        <div class="sidebar-user">
-          <a href="{{ url_for('automator_profile', user_id=current_user.id) }}">{{ current_user.name }}</a>
-          · <a href="{{ url_for('logout') }}">Вийти</a>
-        </div>
-        <div class="sidebar-footer-text">Внутрішній інструмент · Supplax</div>
       </div>
-    </aside>
+      <div class="navbar-content">
+        <div class="card pc-user-card">
+          <div class="card-body">
+            <div class="d-flex align-items-center">
+              {{ ui.avatar(current_user.initials) }}
+              <div class="flex-grow-1 ms-3 me-2">
+                <h6 class="mb-0"><a href="{{ url_for('automator_profile', user_id=current_user.id) }}" class="text-body">{{ current_user.name }}</a></h6>
+                <small class="text-muted">{{ current_user.role.label }}</small>
+              </div>
+              <a class="btn btn-icon btn-link-secondary avtar" href="{{ url_for('logout') }}" title="Вийти" aria-label="Вийти">
+                <i class="ti ti-power"></i>
+              </a>
+            </div>
+          </div>
+        </div>
+        <ul class="pc-navbar">
+          <li class="pc-item {{ 'active' if active_nav == 'registry' }}">
+            <a href="{{ url_for('automations_list') }}" class="pc-link">
+              <span class="pc-micon"><i class="ti ti-list"></i></span>
+              <span class="pc-mtext">Автоматизації</span>
+            </a>
+          </li>
+          <li class="pc-item {{ 'active' if active_nav == 'skills' }}">
+            <a href="{{ url_for('skills_library') }}" class="pc-link">
+              <span class="pc-micon"><i class="ti ti-puzzle"></i></span>
+              <span class="pc-mtext">Бібліотека скіллів</span>
+            </a>
+          </li>
+          {% if current_user.is_admin %}
+          <li class="pc-item {{ 'active' if active_nav == 'departments' }}">
+            <a href="{{ url_for('departments_list') }}" class="pc-link">
+              <span class="pc-micon"><i class="ti ti-building"></i></span>
+              <span class="pc-mtext">Відділи</span>
+            </a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+  </nav>
 
-    <main class="main">
+  <div class="pc-container">
+    <div class="pc-content">
       {% include "_flash.html" %}
       {% block content %}{% endblock %}
-    </main>
+    </div>
   </div>
   {% else %}
-  {% include "_flash.html" %}
-  {% block login_content %}{% endblock %}
+  <div class="auth-main">
+    <div class="auth-wrapper v1">
+      <div class="auth-form">
+        {% include "_flash.html" %}
+        {% block login_content %}{% endblock %}
+      </div>
+    </div>
+  </div>
   {% endif %}
+
+  <!-- feather.replace() is called unconditionally by script.js below; we
+       standardize on Tabler icon classes everywhere and never vendor
+       Feather, so this no-op shim keeps that call from throwing and
+       aborting the rest of script.js's init (sidebar toggle etc). -->
+  <script>window.feather = { replace: function () {} };</script>
+  <script src="{{ url_for('static', filename='vendor/able-pro/js/plugins/popper.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/able-pro/js/plugins/simplebar.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/able-pro/js/plugins/bootstrap.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/able-pro/js/script.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/able-pro/js/theme.js') }}"></script>
 </body>
 </html>

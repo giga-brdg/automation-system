@@ -1,19 +1,12 @@
 {# Shared shield badge for Automation/Skill security-review status.
    state: "none" | "clean" | "medium" | "high" (Automation.security_review_state
-   / Skill.security_review_state, src/models.py). Shape changes with state too,
-   not just color - a checkmark for clean, an exclamation for a real finding -
-   so the signal doesn't rely on color alone. #}
+   / Skill.security_review_state, src/models.py). Icon changes with state too,
+   not just color - a checkmark for clean, an X for a real finding - so the
+   signal doesn't rely on color alone. #}
 {% macro security_chip(state, text) %}
-<span class="sec-chip sec-chip--{{ state }}" title="{{ text }}">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12 3l7 3.2v5.3c0 5-3.1 8.5-7 9.5-3.9-1-7-4.5-7-9.5V6.2L12 3z"/>
-    {% if state == 'clean' %}
-    <path d="M9 12.3l2.1 2.1L15.5 10"/>
-    {% elif state in ('medium', 'high') %}
-    <line x1="12" y1="8.2" x2="12" y2="12.8"/>
-    <circle cx="12" cy="15.6" r="1" fill="currentColor" stroke="none"/>
-    {% endif %}
-  </svg>
-  {{ text }}
+{% set variant = {'none': 'secondary', 'clean': 'success', 'medium': 'warning', 'high': 'danger'}.get(state, 'secondary') %}
+{% set icon = {'none': 'ti-shield', 'clean': 'ti-shield-check', 'medium': 'ti-alert-triangle', 'high': 'ti-shield-x'}.get(state, 'ti-shield') %}
+<span class="badge bg-light-{{ variant }} d-inline-flex align-items-center gap-1" title="{{ text }}">
+  <i class="ti {{ icon }}"></i> {{ text }}
 </span>
 {% endmacro %}

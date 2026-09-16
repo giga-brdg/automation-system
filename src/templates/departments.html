@@ -3,53 +3,61 @@
 {% block title %}Відділи{% endblock %}
 {% block content %}
 <div class="page-title sora">Відділи</div>
-<div class="page-subtitle" style="margin-bottom: 1.2rem;">
+<div class="page-subtitle mb-3">
   Створюються самі при першій синхронізації чи додаванні автоматизації. Тут можна перейменувати
   або об'єднати дублі (якщо хтось опечатався в назві).
 </div>
 
-<table class="table" style="margin-bottom: 2rem;">
-  <thead><tr><th>Колір</th><th>Назва</th><th>Автоматизацій</th><th>Перейменувати</th><th></th></tr></thead>
-  <tbody>
-    {% for d in departments %}
-    <tr>
-      <td><span class="tag" style="{{ d.pill_style }}">&nbsp;&nbsp;&nbsp;</span></td>
-      <td>{{ d.name }}</td>
-      <td>{{ d.automations|length }}</td>
-      <td>
-        <form method="post" action="{{ url_for('department_rename', dept_id=d.id) }}" style="display:flex; gap:6px; margin:0;">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="text" name="name" value="{{ d.name }}" style="padding:.3rem .5rem; border:1px solid var(--border); border-radius:6px; font-size:.85rem;">
-          <button type="submit" class="btn" style="padding:.3rem .7rem; font-size:.8rem;">Зберегти</button>
-        </form>
-      </td>
-      <td>
-        <form method="post" action="{{ url_for('department_delete', dept_id=d.id) }}" style="margin:0;"
-              onsubmit="return confirm('Видалити «{{ d.name }}»?');">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn" style="padding:.3rem .7rem; font-size:.8rem;">Видалити</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card mb-4">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>Колір</th><th>Назва</th><th>Автоматизацій</th><th>Перейменувати</th><th></th></tr></thead>
+      <tbody>
+        {% for d in departments %}
+        <tr>
+          <td><span class="badge" style="{{ d.pill_style }}">&nbsp;&nbsp;&nbsp;</span></td>
+          <td>{{ d.name }}</td>
+          <td>{{ d.automations|length }}</td>
+          <td>
+            <form method="post" action="{{ url_for('department_rename', dept_id=d.id) }}" class="d-flex gap-2 mb-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="text" name="name" value="{{ d.name }}" class="form-control form-control-sm">
+              <button type="submit" class="btn btn-sm btn-light-secondary text-nowrap">Зберегти</button>
+            </form>
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('department_delete', dept_id=d.id) }}" class="mb-0"
+                  onsubmit="return confirm('Видалити «{{ d.name }}»?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-light-danger">Видалити</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 
-<div class="panel" style="max-width: 32rem;">
-  <div class="panel-title sora">Об'єднати дублі</div>
-  <form method="post" action="{{ url_for('department_merge') }}" class="form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>Взяти відділ
-      <select name="from_id" required>
-        {% for d in departments %}<option value="{{ d.id }}">{{ d.name }} ({{ d.automations|length }})</option>{% endfor %}
-      </select>
-    </label>
-    <label>…і перенести всі його автоматизації у
-      <select name="into_id" required>
-        {% for d in departments %}<option value="{{ d.id }}">{{ d.name }} ({{ d.automations|length }})</option>{% endfor %}
-      </select>
-    </label>
-    <button type="submit" class="btn btn-primary" onclick="return confirm('Перший відділ буде видалено, всі його автоматизації перейдуть у другий. Продовжити?');">Об'єднати</button>
-  </form>
+<div class="card" style="max-width: 32rem;">
+  <div class="card-header">Об'єднати дублі</div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('department_merge') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label">Взяти відділ</label>
+        <select name="from_id" class="form-select" required>
+          {% for d in departments %}<option value="{{ d.id }}">{{ d.name }} ({{ d.automations|length }})</option>{% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">…і перенести всі його автоматизації у</label>
+        <select name="into_id" class="form-select" required>
+          {% for d in departments %}<option value="{{ d.id }}">{{ d.name }} ({{ d.automations|length }})</option>{% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" onclick="return confirm('Перший відділ буде видалено, всі його автоматизації перейдуть у другий. Продовжити?');">Об'єднати</button>
+    </form>
+  </div>
 </div>
 {% endblock %}

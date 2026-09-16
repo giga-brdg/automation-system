@@ -44,14 +44,14 @@ class Status(enum.Enum):
         }[self]
 
     @property
-    def dot_color(self):
-        """oklch() token name (see style.css :root) used for the status dot."""
+    def bs_variant(self):
+        """Bootstrap semantic variant for the status badge (bg-light-{variant})."""
         return {
-            Status.IDEA: "var(--text-muted)",
-            Status.IN_DEVELOPMENT: "var(--amber)",
-            Status.READY_NOT_LAUNCHED: "var(--accent)",
-            Status.LIVE: "var(--green)",
-            Status.ARCHIVED: "var(--red)",
+            Status.IDEA: "secondary",
+            Status.IN_DEVELOPMENT: "warning",
+            Status.READY_NOT_LAUNCHED: "primary",
+            Status.LIVE: "success",
+            Status.ARCHIVED: "danger",
         }[self]
 
 

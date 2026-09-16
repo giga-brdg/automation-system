@@ -1,19 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Підтвердження{% endblock %}
 {% block login_content %}
-<div class="login-wrap">
-  <form class="login-card" method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="login-brand">SUPPLAX</div>
-    <h1 class="sora">Підтвердження реєстрації</h1>
-    <label>Email
-      <input type="email" name="email" value="{{ email }}" required autofocus>
-    </label>
-    <label>Код підтвердження
-      <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" required>
-    </label>
-    <button type="submit" class="btn btn-primary" style="justify-content:center">Підтвердити</button>
-    <p class="login-note">Код тобі назве адміністратор — він отримав його в Telegram після твоєї реєстрації.</p>
-  </form>
+<div class="card my-5">
+  <div class="card-body">
+    <div class="text-center mb-3">
+      <div class="text-muted text-uppercase small fw-semibold">Supplax</div>
+      <h4 class="sora mb-0">Підтвердження реєстрації</h4>
+    </div>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label">Email</label>
+        <input type="email" name="email" class="form-control" value="{{ email }}" required autofocus>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Код підтвердження</label>
+        <input type="text" name="code" class="form-control" inputmode="numeric" pattern="[0-9]*" required>
+      </div>
+      <div class="d-grid mt-4">
+        <button type="submit" class="btn btn-primary">Підтвердити</button>
+      </div>
+    </form>
+    <p class="text-muted text-sm mt-3 mb-0">Код тобі назве адміністратор — він отримав його в Telegram після твоєї реєстрації.</p>
+  </div>
 </div>
 {% endblock %}

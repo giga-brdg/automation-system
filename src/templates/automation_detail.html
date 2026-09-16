@@ -1,320 +1,319 @@
 {% extends "base.html" %}
 {% import "_security_chip.html" as sec %}
+{% import "_ui_helpers.html" as ui %}
 {% set active_nav = 'registry' %}
 {% block title %}{{ automation.name }}{% endblock %}
 {% block content %}
-<div class="breadcrumb">
-  <a href="{{ url_for('automations_list') }}">Автоматизації</a>
-  <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l7 6-7 6"/></svg>
-  <span>{{ automation.name }}</span>
-</div>
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('automations_list') }}">Автоматизації</a></li>
+    <li class="breadcrumb-item active">{{ automation.name }}</li>
+  </ol>
+</nav>
 
-<div class="detail-head">
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
   <div>
-    <div class="detail-title-row">
-      <div class="detail-title sora">{{ automation.name }}</div>
-      {% for d in automation.departments %}<div class="tag" style="{{ d.pill_style }}">{{ d.name }}</div>{% endfor %}
-      <div class="status-pill">
-        <span class="status-dot" style="--dot-color: {{ automation.status.dot_color }}"></span>
-        {{ automation.status.label }}
-      </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <div class="page-title sora mb-0">{{ automation.name }}</div>
+      {% for d in automation.departments %}<span class="badge" style="{{ d.pill_style }}">{{ d.name }}</span>{% endfor %}
+      {{ ui.status_badge(automation.status) }}
     </div>
-    <div class="detail-desc">{{ automation.one_liner or "" }}</div>
+    <div class="text-muted mt-2" style="max-width: 640px;">{{ automation.one_liner or "" }}</div>
   </div>
-  <div class="owner-block">
-    <span class="avatar lg">{{ automation.owner.initials }}</span>
+  <div class="d-flex align-items-center gap-2">
+    {{ ui.avatar(automation.owner.initials) }}
     <div>
-      <div class="label">Власник</div>
-      <a class="value" href="{{ url_for('automator_profile', user_id=automation.owner_id) }}">{{ automation.owner.name }}</a>
+      <div class="text-muted small">Власник</div>
+      <a class="fw-semibold" href="{{ url_for('automator_profile', user_id=automation.owner_id) }}">{{ automation.owner.name }}</a>
     </div>
   </div>
 </div>
 
-<div class="detail-body">
-  <div class="detail-main">
+<div class="row g-3">
+  <div class="col-lg-8 d-flex flex-column gap-3">
     {% if automation.description %}
-    <div class="panel">
-      <div class="panel-title sora">Що це робить</div>
-      <p style="font-size:13px; line-height:1.6; margin:0; white-space:pre-line;">{{ automation.description }}</p>
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Що це робить</div>
+        <p class="mb-0" style="white-space:pre-line;">{{ automation.description }}</p>
+      </div>
     </div>
     {% endif %}
 
     {% if automation.pages %}
-    <div class="panel">
-      <div class="panel-title sora">Функціонал</div>
-      <div style="display:flex; flex-direction:column; gap:14px;">
-        {% for p in automation.pages %}
-        <div>
-          <div style="font-size:13.5px; font-weight:600;">{{ p.name }}</div>
-          <div style="font-size:13px; color:var(--text-muted); line-height:1.55; margin-top:2px; white-space:pre-line;">{{ p.description }}</div>
-          {% if p.detail %}
-          <details style="margin-top:6px;">
-            <summary style="font-size:12.5px; color:var(--accent); cursor:pointer;">Детальніше</summary>
-            <div style="font-size:13px; color:var(--text-muted); line-height:1.55; margin-top:6px; white-space:pre-line;">{{ p.detail }}</div>
-          </details>
-          {% endif %}
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Функціонал</div>
+        <div class="d-flex flex-column gap-3">
+          {% for p in automation.pages %}
+          <div>
+            <div class="fw-semibold">{{ p.name }}</div>
+            <div class="text-muted small mt-1" style="white-space:pre-line;">{{ p.description }}</div>
+            {% if p.detail %}
+            <details class="mt-1">
+              <summary class="text-primary small" style="cursor:pointer;">Детальніше</summary>
+              <div class="text-muted small mt-1" style="white-space:pre-line;">{{ p.detail }}</div>
+            </details>
+            {% endif %}
+          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
       </div>
     </div>
     {% endif %}
 
     {% if automation.skills %}
-    <div class="panel">
-      <div class="panel-title sora">Скіли, що використовуються</div>
-      <div class="chip-row">
-        {% for s in automation.skills %}
-        <div class="chip"><span class="chip-dot" style="background: oklch(93% 0.03 {{ loop.index0 * 47 % 360 }});"></span>{{ s.name }}</div>
-        {% endfor %}
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Скіли, що використовуються</div>
+        <div class="d-flex flex-wrap gap-2">
+          {% for s in automation.skills %}
+          <span class="badge bg-light-secondary d-inline-flex align-items-center gap-1"><i class="ti ti-puzzle"></i> {{ s.name }}</span>
+          {% endfor %}
+        </div>
       </div>
     </div>
     {% endif %}
 
-    <div class="panel">
-      <div class="panel-title sora">Пов'язані автоматизації</div>
-      {% if automation.connections %}
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        {% for c in automation.connections %}
-        <a class="related-row" href="{{ url_for('automation_detail', slug=c.connected_automation.slug) }}">
-          <div class="related-row-left">
-            <span class="status-dot" style="--dot-color: {{ c.connected_automation.status.dot_color }}"></span>
-            <span style="font-size:12.5px; font-weight:500;">{{ c.connected_automation.name }}</span>
-          </div>
-          {% if c.connected_automation.departments %}
-          <span class="tag" style="{{ c.connected_automation.departments[0].pill_style }}">{{ c.connected_automation.departments[0].name }}</span>
-          {% endif %}
-        </a>
-        {% endfor %}
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Пов'язані автоматизації</div>
+        {% if automation.connections %}
+        <div class="list-group list-group-flush">
+          {% for c in automation.connections %}
+          <a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between" href="{{ url_for('automation_detail', slug=c.connected_automation.slug) }}">
+            <div class="d-flex align-items-center gap-2">
+              <span class="badge bg-light-{{ c.connected_automation.status.bs_variant }}">&nbsp;</span>
+              <span class="small fw-medium">{{ c.connected_automation.name }}</span>
+            </div>
+            {% if c.connected_automation.departments %}
+            <span class="badge" style="{{ c.connected_automation.departments[0].pill_style }}">{{ c.connected_automation.departments[0].name }}</span>
+            {% endif %}
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">Зв'язків з іншими автоматизаціями ще не вказано.</p>
+        {% endif %}
       </div>
-      {% else %}
-      <p style="color:var(--text-muted); font-size:12.5px; margin:0;">Зв'язків з іншими автоматизаціями ще не вказано.</p>
-      {% endif %}
     </div>
 
-    <div style="display:flex; gap:10px;">
+    <div class="d-flex flex-wrap gap-2">
       {% if automation.repo_url %}
-      <a class="btn" href="{{ automation.repo_url }}">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="6" cy="6" r="2.1"/><circle cx="6" cy="18" r="2.1"/><circle cx="18" cy="9" r="2.1"/>
-          <path d="M6 8.1V16"/><path d="M6 14.5c0-2.6 2.1-3.9 5-3.9h5.4"/>
-        </svg>
-        Репозиторій
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ automation.repo_url }}">
+        <i class="ti ti-brand-github"></i> Репозиторій
       </a>
       {% endif %}
       {% if automation.clickup_url %}
-      <a class="btn" href="{{ automation.clickup_url }}">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8 12.2l2.6 2.6L16 9"/>
-        </svg>
-        Задача в ClickUp
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ automation.clickup_url }}">
+        <i class="ti ti-list-check"></i> Задача в ClickUp
       </a>
       {% endif %}
       {% if current_user.can_manage(automation) %}
-      <a class="btn" href="{{ url_for('automation_edit', slug=automation.slug) }}">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
-        </svg>
-        Редагувати
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_edit', slug=automation.slug) }}">
+        <i class="ti ti-edit"></i> Редагувати
       </a>
-      <a class="btn" href="{{ url_for('automation_stage0', slug=automation.slug) }}">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-        </svg>
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_stage0', slug=automation.slug) }}">
+        <i class="ti ti-clipboard-check"></i>
         {% if automation.stage0_answers %}Stage 0: {{ automation.stage0_answers|length }}/9 фаз{% else %}Заповнити Stage 0{% endif %}
       </a>
       {% endif %}
       {% if not automation.repo_url and current_user.can_manage(automation) %}
-      <a class="btn" href="{{ url_for('automation_import_github', slug=automation.slug, owner_id=automation.owner_id) }}">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="6" cy="6" r="2.1"/><circle cx="6" cy="18" r="2.1"/><circle cx="18" cy="9" r="2.1"/>
-          <path d="M6 8.1V16"/><path d="M6 14.5c0-2.6 2.1-3.9 5-3.9h5.4"/>
-        </svg>
-        Синхронізувати з GitHub
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_import_github', slug=automation.slug, owner_id=automation.owner_id) }}">
+        <i class="ti ti-brand-github"></i> Синхронізувати з GitHub
       </a>
       {% endif %}
       {% if automation.repo_url and current_user.can_manage(automation) %}
-      <form method="post" action="{{ url_for('automation_resync', slug=automation.slug) }}" style="margin:0;">
+      <form method="post" action="{{ url_for('automation_resync', slug=automation.slug) }}" class="mb-0">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8"/><path d="M21 3v5h-5"/>
-            <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"/><path d="M3 21v-5h5"/>
-          </svg>
-          Оновити з GitHub
+        <button type="submit" class="btn btn-light-secondary d-inline-flex align-items-center gap-1">
+          <i class="ti ti-refresh"></i> Оновити з GitHub
         </button>
       </form>
       {% endif %}
     </div>
 
     {% if automation.todo_items %}
-    {% set pending = automation.todo_items|rejectattr('done')|list %}
+    {% set pending_todos = automation.todo_items|rejectattr('done')|list %}
     {% set done = automation.todo_items|selectattr('done')|list %}
-    <div class="panel">
-      <div class="panel-title sora">Плани</div>
-      <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:10px;">
-        Виконано {{ done|length }} з {{ automation.todo_items|length }}
-      </div>
-      {% if pending %}
-      <div style="display:flex; flex-direction:column; gap:6px;">
-        {% for t in pending %}
-        <div style="display:flex; align-items:flex-start; gap:8px; font-size:13px;">
-          <span style="width:14px; height:14px; border:1.5px solid var(--border); border-radius:4px; flex-shrink:0; margin-top:2px;"></span>
-          <span>{{ t.text }}</span>
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Плани</div>
+        <div class="text-muted small mb-2">
+          Виконано {{ done|length }} з {{ automation.todo_items|length }}
         </div>
-        {% endfor %}
+        {% if pending_todos %}
+        <div class="d-flex flex-column gap-2">
+          {% for t in pending_todos %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" disabled>
+            <label class="form-check-label">{{ t.text }}</label>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">Все заплановане вже зроблено.</p>
+        {% endif %}
       </div>
-      {% else %}
-      <p style="font-size:12.5px; color:var(--text-muted); margin:0;">Все заплановане вже зроблено.</p>
-      {% endif %}
     </div>
     {% endif %}
 
     {% if automation.review_log %}
-    <div class="panel">
-      <div class="panel-title sora">Журнал перевірок</div>
-      <div class="log-list">
-        {% for r in automation.review_log %}
-        <div class="log-item">
-          <div class="log-label">{{ r.round_label }}</div>
-          <div>{{ r.found }}</div>
-          {% if r.changed %}<div><strong>Змінено:</strong> {{ r.changed }}</div>{% endif %}
-          {% if r.rejected %}<div><strong>Відхилено:</strong> {{ r.rejected }}</div>{% endif %}
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Журнал перевірок</div>
+        <div class="list-group list-group-flush">
+          {% for r in automation.review_log %}
+          <div class="list-group-item">
+            <div class="text-muted small fw-semibold text-uppercase mb-1">{{ r.round_label }}</div>
+            <div class="small">{{ r.found }}</div>
+            {% if r.changed %}<div class="small"><strong>Змінено:</strong> {{ r.changed }}</div>{% endif %}
+            {% if r.rejected %}<div class="small"><strong>Відхилено:</strong> {{ r.rejected }}</div>{% endif %}
+          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
       </div>
     </div>
     {% endif %}
 
     {% if automation.comparison %}
-    <div class="panel">
-      <div class="panel-title sora">Порівняння зі старим способом</div>
-      <p style="font-size:13px; margin: 0 0 10px;">{{ automation.comparison.old_way_description or "" }}</p>
-      {% if automation.comparison.features %}
-      <table class="table">
-        <thead><tr><th>Функція</th><th>Було</th><th>Стало</th><th>Чому важливо</th></tr></thead>
-        <tbody>
-          {% for f in automation.comparison.features %}
-          <tr><td>{{ f.feature }}</td><td>{{ f.old_way }}</td><td>{{ f.new_way }}</td><td>{{ f.why_it_matters }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% endif %}
-      {% if automation.comparison.limitations %}<p style="font-size:12.5px; color:var(--text-muted); margin-top:10px;"><strong>Обмеження:</strong> {{ automation.comparison.limitations }}</p>{% endif %}
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Порівняння зі старим способом</div>
+        <p class="small mb-2">{{ automation.comparison.old_way_description or "" }}</p>
+        {% if automation.comparison.features %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead><tr><th>Функція</th><th>Було</th><th>Стало</th><th>Чому важливо</th></tr></thead>
+            <tbody>
+              {% for f in automation.comparison.features %}
+              <tr><td>{{ f.feature }}</td><td>{{ f.old_way }}</td><td>{{ f.new_way }}</td><td>{{ f.why_it_matters }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+        {% if automation.comparison.limitations %}<p class="text-muted small mt-2 mb-0"><strong>Обмеження:</strong> {{ automation.comparison.limitations }}</p>{% endif %}
+      </div>
     </div>
     {% endif %}
   </div>
 
-  <div class="detail-side">
+  <div class="col-lg-4 d-flex flex-column gap-3">
     {% if automation.roi %}
-    <div class="panel roi-panel">
-      <div class="roi-panel-head">
-        <div class="panel-title sora">ROI</div>
-        <div class="roi-badge">{{ "Виміряно" if automation.roi.confidence == "measured" else "Оцінка" }}</div>
+    <div class="card bg-primary-subtle border-primary-subtle">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div class="card-title sora mb-0">ROI</div>
+          <span class="badge bg-white text-primary">{{ "Виміряно" if automation.roi.confidence == "measured" else "Оцінка" }}</span>
+        </div>
+        <div class="sora fw-bold" style="font-size:30px; line-height:1;">{{ automation.roi.measured_value or "—" }}</div>
+        <div class="small mt-1" style="opacity:.85;">{{ automation.roi.metric_description or "" }}</div>
+        <hr>
+        <div class="small" style="opacity:.9;">{{ automation.roi.hypothesis or "" }}</div>
+        {% if automation.roi.qualitative_notes %}
+        <ul class="small mt-2 mb-0 ps-3" style="opacity:.9;">
+          {% for line in automation.roi.qualitative_notes.split('\n') %}
+          {% if line.strip() %}<li>{{ line.strip() }}</li>{% endif %}
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if automation.roi.presentation_url %}
+        <a class="btn btn-primary d-flex align-items-center justify-content-center gap-1 mt-3" href="{{ automation.roi.presentation_url }}" target="_blank" rel="noopener">
+          <i class="ti ti-presentation"></i> Переглянути презентацію
+        </a>
+        {% endif %}
       </div>
-      <div class="roi-number sora">{{ automation.roi.measured_value or "—" }}</div>
-      <div class="roi-caption">{{ automation.roi.metric_description or "" }}</div>
-      <div class="roi-divider"></div>
-      <div class="roi-baseline">{{ automation.roi.hypothesis or "" }}</div>
-      {% if automation.roi.qualitative_notes %}
-      <ul style="font-size:12px; color:var(--accent-ink); opacity:.85; line-height:1.55; margin-top:10px; padding-left:16px;">
-        {% for line in automation.roi.qualitative_notes.split('\n') %}
-        {% if line.strip() %}<li>{{ line.strip() }}</li>{% endif %}
-        {% endfor %}
-      </ul>
-      {% endif %}
-      {% if automation.roi.presentation_url %}
-      <a class="btn" style="margin-top:10px; width:100%; justify-content:center;" href="{{ automation.roi.presentation_url }}" target="_blank" rel="noopener">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
-        </svg>
-        Переглянути презентацію
-      </a>
-      {% endif %}
     </div>
     {% endif %}
 
     {% if automation.ai_usage_project_id %}
-    <div class="panel">
-      <div class="panel-title sora">Токени</div>
-      {% if usage_summary is none %}
-      <div style="font-size:12.5px; color:var(--text-muted);">
-        Не вдалося отримати дані з ai-usage-collector (перевір AI_USAGE_DATABASE_URL).
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Токени</div>
+        {% if usage_summary is none %}
+        <div class="text-muted small">
+          Не вдалося отримати дані з ai-usage-collector (перевір AI_USAGE_DATABASE_URL).
+        </div>
+        {% elif not usage_summary.has_any_data %}
+        <div class="text-muted small">
+          Проєкт підключено (ID {{ automation.ai_usage_project_id }}), але даних про витрати ще немає.
+        </div>
+        {% else %}
+        <div class="small">
+          Цей місяць: <strong>${{ "%.2f"|format(usage_summary.month_spend_usd) }}</strong>
+          {% if usage_summary.budget_usd is not none %} з ${{ "%.2f"|format(usage_summary.budget_usd) }}{% endif %}
+        </div>
+        {% if usage_summary.budget_pct is not none %}
+        <div class="text-muted mt-1" style="font-size:11px;">
+          {{ (usage_summary.budget_pct * 100)|round(0, 'floor')|int }}% бюджету
+        </div>
+        {% elif usage_summary.month_spend_usd > 0 %}
+        <div class="text-primary mt-1" style="font-size:11px;">
+          Бюджет не задано — редагуй картку, щоб алерти по бюджету запрацювали.
+        </div>
+        {% endif %}
+        <div class="text-muted mt-2" style="font-size:11px;">
+          Сьогодні: ${{ "%.2f"|format(usage_summary.today_spend_usd) }} ·
+          Середнє за 7 днів: ${{ "%.2f"|format(usage_summary.trailing_7d_avg_usd) }}
+        </div>
+        {% endif %}
       </div>
-      {% elif not usage_summary.has_any_data %}
-      <div style="font-size:12.5px; color:var(--text-muted);">
-        Проєкт підключено (ID {{ automation.ai_usage_project_id }}), але даних про витрати ще немає.
-      </div>
-      {% else %}
-      <div style="font-size:13px;">
-        Цей місяць: <strong>${{ "%.2f"|format(usage_summary.month_spend_usd) }}</strong>
-        {% if usage_summary.budget_usd %} з ${{ "%.2f"|format(usage_summary.budget_usd) }}{% endif %}
-      </div>
-      {% if usage_summary.budget_pct is not none %}
-      <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">
-        {{ (usage_summary.budget_pct * 100)|round(0, 'floor')|int }}% бюджету
-      </div>
-      {% elif usage_summary.month_spend_usd > 0 %}
-      <div style="font-size:11px; color:var(--accent-ink); margin-top:4px;">
-        Бюджет не задано — редагуй картку, щоб алерти по бюджету запрацювали.
-      </div>
-      {% endif %}
-      <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
-        Сьогодні: ${{ "%.2f"|format(usage_summary.today_spend_usd) }} ·
-        Середнє за 7 днів: ${{ "%.2f"|format(usage_summary.trailing_7d_avg_usd) }}
-      </div>
-      {% endif %}
     </div>
     {% endif %}
 
-    <div class="panel">
-      <div class="panel-title sora">Статус</div>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span class="status-dot" style="--dot-color: {{ automation.status.dot_color }}; width:8px; height:8px;"></span>
-        <span style="font-size:13px; font-weight:500;">{{ automation.status.label }}</span>
-      </div>
-      <div style="font-size:12px; color:var(--text-muted); margin-top:8px; line-height:1.5;">
-        Востаннє редаговано вручну: {{ automation.updated_at.strftime("%Y-%m-%d") }}.<br>
-        {% if automation.repo_url %}
-          {% if automation.last_synced_at %}
-            Синхронізовано з GitHub: {{ automation.last_synced_at.strftime("%Y-%m-%d %H:%M") }}.
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Статус</div>
+        {{ ui.status_badge(automation.status) }}
+        <div class="text-muted mt-2" style="font-size:12px; line-height:1.5;">
+          Востаннє редаговано вручну: {{ automation.updated_at.strftime("%Y-%m-%d") }}.<br>
+          {% if automation.repo_url %}
+            {% if automation.last_synced_at %}
+              Синхронізовано з GitHub: {{ automation.last_synced_at.strftime("%Y-%m-%d %H:%M") }}.
+            {% else %}
+              Репозиторій вказано, але синхронізація ще жодного разу не запускалась.
+            {% endif %}
           {% else %}
-            Репозиторій вказано, але синхронізація ще жодного разу не запускалась.
+            Не підключено до GitHub.
           {% endif %}
-        {% else %}
-          Не підключено до GitHub.
-        {% endif %}
+        </div>
       </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-title sora">Security review</div>
-      {{ sec.security_chip(automation.security_review_state, automation.security_review_label) }}
-      <div style="font-size:12px; color:var(--text-muted); margin-top:8px; line-height:1.5;">
-        {% if automation.security_review_state == 'none' %}
-        Ще не проходила через `/security-review` — або проходила, але dashboard/SECURITY_REVIEW.md
-        у репозиторії ще не з'явився чи не синхронізований.
-        {% else %}
-        Останній прогін: {{ automation.security_review_at.strftime("%Y-%m-%d") }}.
-        {% if automation.security_review_state in ('medium', 'high') %}
-        Відкрито: {{ automation.security_review_high or 0 }} High, {{ automation.security_review_medium or 0 }} Medium.
-        {% endif %}
-        Це знімок на момент прогону, не жива гарантія — новий код після цієї дати ще не перевірявся.
-        {% endif %}
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Security review</div>
+        {{ sec.security_chip(automation.security_review_state, automation.security_review_label) }}
+        <div class="text-muted mt-2" style="font-size:12px; line-height:1.5;">
+          {% if automation.security_review_state == 'none' %}
+          Ще не проходила через `/security-review` — або проходила, але dashboard/SECURITY_REVIEW.md
+          у репозиторії ще не з'явився чи не синхронізований.
+          {% else %}
+          Останній прогін: {{ automation.security_review_at.strftime("%Y-%m-%d") }}.
+          {% if automation.security_review_state in ('medium', 'high') %}
+          Відкрито: {{ automation.security_review_high or 0 }} High, {{ automation.security_review_medium or 0 }} Medium.
+          {% endif %}
+          Це знімок на момент прогону, не жива гарантія — новий код після цієї дати ще не перевірявся.
+          {% endif %}
+        </div>
       </div>
     </div>
 
     {% if automation.current_stage_override or automation.last_commit_message %}
-    <div class="panel">
-      <div class="panel-title sora">Зараз</div>
-      {% if automation.current_stage_override %}
-      <div style="font-size:13px;">{{ automation.current_stage_override }}</div>
-      <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Вказано вручну в dashboard/SUMMARY.md</div>
-      {% else %}
-      <div style="font-size:13px; font-family: 'IBM Plex Mono', monospace;">{{ automation.last_commit_message }}</div>
-      <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">
-        Останній комміт{% if automation.last_commit_at %} · {{ automation.last_commit_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title sora">Зараз</div>
+        {% if automation.current_stage_override %}
+        <div class="small">{{ automation.current_stage_override }}</div>
+        <div class="text-muted mt-1" style="font-size:11px;">Вказано вручну в dashboard/SUMMARY.md</div>
+        {% else %}
+        <div class="small" style="font-family: 'IBM Plex Mono', monospace;">{{ automation.last_commit_message }}</div>
+        <div class="text-muted mt-1" style="font-size:11px;">
+          Останній комміт{% if automation.last_commit_at %} · {{ automation.last_commit_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}
+        </div>
+        {% endif %}
       </div>
-      {% endif %}
     </div>
     {% endif %}
   </div>

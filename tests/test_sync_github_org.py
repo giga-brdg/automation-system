@@ -5,6 +5,8 @@ Only repos with a dashboard/SUMMARY.md become real Automation rows; a
 non-archived repo without one is tracked as PendingAutomation instead of
 silently dropped (see TestPendingAutomations below) - only an archived repo
 is skipped outright."""
+import re
+
 from src import github_sync
 from src.extensions import db
 from src.models import Automation, PendingAutomation, Role, User
@@ -245,8 +247,12 @@ class TestPendingAutomationDismiss:
         assert resp.status_code == 302
         with app.app_context():
             assert PendingAutomation.query.get(pending_id).dismissed is True
+        # Checks the dismissed row's own per-id action URL is gone, not the
+        # automation's name - the success flash re-displayed on this same
+        # request also mentions the name, which would make a name-based
+        # assertion pass vacuously.
         html = client.get("/automations").get_data(as_text=True)
-        assert "pending-item" not in html
+        assert f"/automations/pending/{pending_id}/dismiss" not in html
 
     def test_a_viewer_cannot_dismiss(self, app, client, monkeypatch):
         import re
@@ -264,3 +270,120 @@ class TestPendingAutomationDismiss:
         client.post("/login", data={"email": "viewer@x.com", "password": "pw12345", "csrf_token": token})
         resp = client.post(f"/automations/pending/{pending_id}/dismiss", data={"csrf_token": token})
         assert resp.status_code == 403
+
+
+class TestSyncGithubOrgButton:
+    """The "Оновити з GitHub" button on /automations - runs the same scan as
+    the cron-invoked CLI command, but on demand via POST /automations/sync-
+    github-org, for whoever doesn't want to wait for the daily 03:00 UTC
+    run."""
+
+    def _login(self, client, email):
+        token_html = client.get("/login").get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', token_html).group(1)
+        client.post("/login", data={"email": email, "password": "pw12345", "csrf_token": token})
+
+    def test_automator_can_trigger_a_sync(self, app, client, monkeypatch):
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        monkeypatch.setenv("GITHUB_SYNC_ORG", "giga-brdg")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nThing\n"})
+        self._login(client, "owner@x.com")
+        html = client.get("/automations").get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+        resp = client.post("/automations/sync-github-org", data={"csrf_token": token}, follow_redirects=True)
+        assert resp.status_code == 200
+        assert "1 нових" in resp.get_data(as_text=True)
+        with app.app_context():
+            assert Automation.query.filter_by(slug="thing").count() == 1
+
+    def test_a_viewer_cannot_trigger_a_sync(self, app, client, monkeypatch):
+        with app.app_context():
+            _make_user("viewer@x.com", "Viewer", role=Role.VIEWER)
+        monkeypatch.setenv("GITHUB_SYNC_ORG", "giga-brdg")
+        # A viewer never sees the button/its csrf-carrying form (/automations
+        # renders none for them), so grab a token from the login page before
+        # logging in - same as TestPendingAutomationDismiss's viewer test.
+        token_html = client.get("/login").get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', token_html).group(1)
+        self._login(client, "viewer@x.com")
+        resp = client.post("/automations/sync-github-org", data={"csrf_token": token})
+        assert resp.status_code == 403
+
+    def test_refuses_without_a_configured_org(self, app, client, monkeypatch):
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        monkeypatch.delenv("GITHUB_SYNC_ORG", raising=False)
+        self._login(client, "owner@x.com")
+        html = client.get("/automations").get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+        resp = client.post("/automations/sync-github-org", data={"csrf_token": token}, follow_redirects=True)
+        assert "GITHUB_SYNC_ORG" in resp.get_data(as_text=True)
+
+
+class TestSyncGithubOrgRobustness:
+    """Covers run_github_org_sync's concurrency guard and its per-repo (not
+    whole-scan) exception handling, added after a code review found the
+    original except-Exception scope wrapped the entire loop - a failure on
+    any one repo used to be misreported as "couldn't list repos" even
+    though listing succeeded and earlier repos were already committed."""
+
+    def test_a_second_concurrent_call_is_refused_not_queued(self, app):
+        from src.app import _github_org_sync_lock, run_github_org_sync
+
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        assert _github_org_sync_lock.acquire(blocking=False)
+        try:
+            with app.app_context():
+                try:
+                    run_github_org_sync(app, "giga-brdg")
+                    assert False, "expected a ValueError while the lock is already held"
+                except ValueError as e:
+                    assert "вже виконується" in str(e)
+        finally:
+            _github_org_sync_lock.release()
+
+    def test_a_failure_on_one_repo_does_not_abort_the_scan_or_earlier_commits(self, app, monkeypatch):
+        from src.app import run_github_org_sync
+
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        with app.app_context():
+            _stub_org(
+                monkeypatch,
+                [_repo("first-ok"), _repo("second-broken"), _repo("third-ok")],
+                {"first-ok": "## Name\nFirst\n", "second-broken": "## Name\nBroken\n",
+                 "third-ok": "## Name\nThird\n"},
+            )
+            real_fetch_latest_commit = github_sync.fetch_latest_commit
+
+            def flaky_fetch_latest_commit(owner, repo, branch):
+                if repo == "second-broken":
+                    raise RuntimeError("simulated transient GitHub error")
+                return real_fetch_latest_commit(owner, repo, branch)
+            monkeypatch.setattr(github_sync, "fetch_latest_commit", flaky_fetch_latest_commit)
+
+            summary = run_github_org_sync(app, "giga-brdg")
+            # The two good repos are committed and counted even though the
+            # middle one blew up - a whole-scan except would have lost both
+            # the commits already made and reported a misleading "couldn't
+            # list repos" instead of this per-repo failure count.
+            assert "2 нових" in summary
+            assert "1 репозиторіїв пропущено через помилку" in summary
+            slugs = {a.slug for a in Automation.query.all()}
+            assert slugs == {"first-ok", "third-ok"}
+
+    def test_cli_owner_defaults_to_github_sync_org_env_var(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "owner@x.com")
+        monkeypatch.setenv("GITHUB_SYNC_ORG", "giga-brdg")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nThing\n"})
+            runner = app.test_cli_runner()
+            result = runner.invoke(args=["sync-github-org"])
+            assert "1 нових" in result.output

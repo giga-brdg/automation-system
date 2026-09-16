@@ -1,28 +1,38 @@
 {% extends "base.html" %}
 {% block title %}Реєстрація{% endblock %}
 {% block login_content %}
-<div class="login-wrap">
-  <form class="login-card" method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="login-brand">SUPPLAX</div>
-    <h1 class="sora">Реєстрація в порт­фелі автоматизацій</h1>
-    <label>Ім'я
-      <input type="text" name="name" required autofocus>
-    </label>
-    <label>Email
-      <input type="email" name="email" required>
-    </label>
-    <label>Пароль
-      <input type="password" name="password" required>
-    </label>
-    <label>Повтори пароль
-      <input type="password" name="password_confirm" required>
-    </label>
-    <button type="submit" class="btn btn-primary" style="justify-content:center">Зареєструватися</button>
-    <p class="login-note">
+<div class="card my-5">
+  <div class="card-body">
+    <div class="text-center mb-3">
+      <div class="text-muted text-uppercase small fw-semibold">Supplax</div>
+      <h4 class="sora mb-0">Реєстрація в порт­фелі автоматизацій</h4>
+    </div>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label">Ім'я</label>
+        <input type="text" name="name" class="form-control" required autofocus>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Email</label>
+        <input type="email" name="email" class="form-control" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Пароль</label>
+        <input type="password" name="password" class="form-control" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Повтори пароль</label>
+        <input type="password" name="password_confirm" class="form-control" required>
+      </div>
+      <div class="d-grid mt-4">
+        <button type="submit" class="btn btn-primary">Зареєструватися</button>
+      </div>
+    </form>
+    <p class="text-muted text-sm mt-3 mb-0">
       Після реєстрації код підтвердження прийде адміністратору в Telegram — попроси його
       назвати тобі код і <a href="{{ url_for('login') }}">увійди</a>, коли він надасть доступ.
     </p>
-  </form>
+  </div>
 </div>
 {% endblock %}

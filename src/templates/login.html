@@ -1,20 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Вхід{% endblock %}
 {% block login_content %}
-<div class="login-wrap">
-  <form class="login-card" method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="login-brand">SUPPLAX</div>
-    <h1 class="sora">Вхід у портфель автоматизацій</h1>
-    <label>Email
-      <input type="email" name="email" required autofocus>
-    </label>
-    <label>Пароль
-      <input type="password" name="password" required>
-    </label>
-    <button type="submit" class="btn btn-primary" style="justify-content:center">Увійти</button>
-    <p class="login-note">Немає акаунта? <a href="{{ url_for('register') }}">Зареєструйся</a> —
+<div class="card my-5">
+  <div class="card-body">
+    <div class="text-center mb-3">
+      <div class="text-muted text-uppercase small fw-semibold">Supplax</div>
+      <h4 class="sora mb-0">Вхід у портфель автоматизацій</h4>
+    </div>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label">Email</label>
+        <input type="email" name="email" class="form-control" required autofocus>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Пароль</label>
+        <input type="password" name="password" class="form-control" required>
+      </div>
+      <div class="d-grid mt-4">
+        <button type="submit" class="btn btn-primary">Увійти</button>
+      </div>
+    </form>
+    <p class="text-muted text-sm mt-3 mb-0">Немає акаунта? <a href="{{ url_for('register') }}">Зареєструйся</a> —
       доступ підтверджує адміністратор у Telegram.</p>
-  </form>
+  </div>
 </div>
 {% endblock %}

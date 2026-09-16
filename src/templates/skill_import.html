@@ -3,17 +3,22 @@
 {% block title %}Синхронізація скіла з GitHub{% endblock %}
 {% block content %}
 <div class="page-title sora">Додати скіл з GitHub</div>
-<div class="page-subtitle" style="margin-bottom: 1rem;">
+<div class="page-subtitle mb-3">
   Два формати посилання: звичайний репозиторій — бере SKILL.md з кореня, один скіл;
   посилання на папку (.../tree/гілка/шлях, напр. .../tree/master/.claude/skills) —
   імпортує одразу всі скіли з підпапок цієї папки.
 </div>
-<form method="post" class="form">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <label>Посилання на репозиторій або папку
-    <input type="url" name="repo_url" required
-           placeholder="https://github.com/owner/skill-repo або .../tree/master/.claude/skills">
-  </label>
-  <button type="submit" class="btn btn-primary">Синхронізувати</button>
-</form>
+<div class="card" style="max-width: 40rem;">
+  <div class="card-body">
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label">Посилання на репозиторій або папку</label>
+        <input type="url" name="repo_url" class="form-control" required
+               placeholder="https://github.com/owner/skill-repo або .../tree/master/.claude/skills">
+      </div>
+      <button type="submit" class="btn btn-primary">Синхронізувати</button>
+    </form>
+  </div>
+</div>
 {% endblock %}

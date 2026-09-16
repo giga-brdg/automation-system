@@ -1,0 +1,11 @@
+{# Shared UI bits reused across automations_list/automation_detail/automator_profile/base -
+   status badge and initials avatar were previously hand-repeated per template with
+   drifting size/variant choices; kept together so a future tweak is one edit. #}
+
+{% macro status_badge(status) %}
+<span class="badge bg-light-{{ status.bs_variant }}">{{ status.label }}</span>
+{% endmacro %}
+
+{% macro avatar(initials, size=36, variant='primary') %}
+<span class="rounded-circle bg-light-{{ variant }} d-flex align-items-center justify-content-center flex-shrink-0" style="width:{{ size }}px;height:{{ size }}px;font-weight:600;font-size:{{ (size * 0.32)|round|int }}px;">{{ initials }}</span>
+{% endmacro %}

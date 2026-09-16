@@ -1,5 +1,12 @@
-{% with messages = get_flashed_messages() %}
-  {% if messages %}
-    <div class="flash">{% for m in messages %}<p style="margin:0">{{ m }}</p>{% endfor %}</div>
-  {% endif %}
+{# category is one of Flask's flash() categories: 'success'/'error'/'warning'/'info',
+   or the implicit default 'message' for an uncategorized flash() call - mapped to
+   'warning' below since not every message is an error. #}
+{% set _flash_variants = {'success': 'success', 'error': 'danger', 'warning': 'warning', 'info': 'info'} %}
+{% with messages = get_flashed_messages(with_categories=True) %}
+  {% for category, m in messages %}
+  <div class="alert alert-{{ _flash_variants.get(category, 'warning') }} alert-dismissible fade show" role="alert">
+    {{ m }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+  </div>
+  {% endfor %}
 {% endwith %}

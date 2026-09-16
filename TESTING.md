@@ -17,7 +17,7 @@ Postgres as an opt-in upgrade via `DATABASE_URL` (`ARCHITECTURE.md`,
 fixture is required. Testing strategy has to follow the code that actually
 exists, not either stale premise:
 - **Unit** — pure, no-mocking-needed logic, in two places: `src/models.py`'s
-  small helpers (`Role.label`/`Status.label`/`dot_color`, `hue_for`,
+  small helpers (`Role.label`/`Status.label`/`bs_variant`, `hue_for`,
   `User.is_admin`/`is_automator`/`can_manage`/`initials`,
   `Department.pill_style`), and — the bigger target by line count, and the
   cheapest to cover well since none of it needs mocking — `src/github_sync.py`'s
