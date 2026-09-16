@@ -4,5 +4,5 @@
 2026-09-16
 
 ## Open Findings
-- High: 9
-- Medium: 18
+- High: 1
+- Medium: 22
