@@ -106,3 +106,15 @@ a.card:hover {
   outline: 2px solid #6b7280;
   outline-offset: 1px;
 }
+
+/* Bootstrap's border-{color}/border-{width} utilities set the border
+   shorthand on all four sides, not just the one border-start already
+   picked - combining them (as automation_detail.html's "Порівняння зі
+   старим способом" card did) doesn't give a colored left accent stripe,
+   it silently turns the whole card's border thick and colored on every
+   side (confirmed via computed style during the 2026-09 color/spacing
+   audit). This is the actual left-accent-only treatment; use it instead
+   of stacking border-start with a color/width utility. */
+.card-accent-start {
+  border-left: 3px solid var(--bs-primary) !important;
+}

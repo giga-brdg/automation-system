@@ -22,25 +22,25 @@
 
 <div class="row row-cols-2 row-cols-md-4 g-2 mb-3">
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-2 px-3">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Всього</div>
       <div class="fw-bold f-22">{{ total_count }}</div>
     </div></div>
   </div>
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-2 px-3">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Працює</div>
       <div class="fw-bold f-22 text-success">{{ counts[statuses.LIVE] }}</div>
     </div></div>
   </div>
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-2 px-3">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">У розробці</div>
       <div class="fw-bold f-22 text-warning">{{ counts[statuses.IN_DEVELOPMENT] }}</div>
     </div></div>
   </div>
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-2 px-3">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Потребують security review</div>
       <div class="fw-bold f-22{% if needs_review_count %} text-danger{% endif %}">{{ needs_review_count }}</div>
     </div></div>
