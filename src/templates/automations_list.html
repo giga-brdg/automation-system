@@ -111,7 +111,7 @@
           <div class="fw-semibold">{{ a.name }}</div>
           <div class="text-muted small" style="display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" title="{{ a.one_liner or '' }}">{{ a.one_liner or "" }}</div>
         </div>
-        {{ sec.security_chip(a.security_review_state, a.security_review_label, compact=True) }}
+        <div class="align-self-start">{{ sec.security_chip(a.security_review_state, a.security_review_label, compact=True) }}</div>
         <hr class="my-1">
         <div class="d-flex align-items-center justify-content-between">
           <div class="d-flex align-items-center gap-1 text-primary fw-semibold small">
