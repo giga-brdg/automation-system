@@ -73,6 +73,13 @@ def create_app():
     # will actually send back - Railway sets this var in every deployed
     # environment (confirmed: RAILWAY_ENVIRONMENT=production today), so this
     # isn't guessing at how to detect "real deployment" vs. a laptop.
+    # Named explicitly (not Flask's default "session") because this dashboard
+    # is meant to end up sharing a domain/subdomain with other automations'
+    # own apps - Flask-Login's default cookie name is generic enough that two
+    # apps on the same host would silently overwrite each other's session
+    # cookie in the browser's cookie jar. Every app landing on that shared
+    # domain needs its own distinct name; this is this one's.
+    app.config["SESSION_COOKIE_NAME"] = "automation_portfolio_session"
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
