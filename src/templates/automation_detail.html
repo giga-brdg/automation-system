@@ -84,7 +84,7 @@
           <a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between" href="{{ url_for('automation_detail', slug=c.connected_automation.slug) }}">
             <div class="d-flex align-items-center gap-2">
               <span class="badge bg-light-{{ c.connected_automation.status.bs_variant }}">&nbsp;</span>
-              <span class="small fw-medium">{{ c.connected_automation.name }}</span>
+              <span class="fw-medium">{{ c.connected_automation.name }}</span>
             </div>
             {% if c.connected_automation.departments %}
             <span class="badge dept-pill" style="{{ c.connected_automation.departments[0].pill_style }}">{{ c.connected_automation.departments[0].name }}</span>
@@ -164,9 +164,9 @@
           {% for r in automation.review_log %}
           <div class="list-group-item">
             <div class="text-muted small fw-semibold text-uppercase mb-1">{{ r.round_label }}</div>
-            <div class="small">{{ r.found }}</div>
-            {% if r.changed %}<div class="small"><strong>Змінено:</strong> {{ r.changed }}</div>{% endif %}
-            {% if r.rejected %}<div class="small"><strong>Відхилено:</strong> {{ r.rejected }}</div>{% endif %}
+            <div>{{ r.found }}</div>
+            {% if r.changed %}<div><strong>Змінено:</strong> {{ r.changed }}</div>{% endif %}
+            {% if r.rejected %}<div><strong>Відхилено:</strong> {{ r.rejected }}</div>{% endif %}
           </div>
           {% endfor %}
         </div>
@@ -178,7 +178,7 @@
     <div class="card card-accent-start">
       <div class="card-body">
         <h5 class="card-title">Порівняння зі старим способом</h5>
-        <p class="small mb-2">{{ automation.comparison.old_way_description or "" }}</p>
+        <p class="mb-2">{{ automation.comparison.old_way_description or "" }}</p>
         {% if automation.comparison.features %}
         <div class="table-responsive">
           <table class="table table-hover align-middle" style="table-layout: fixed;">
@@ -265,7 +265,7 @@
           Проєкт підключено (ID {{ automation.ai_usage_project_id }}), але даних про витрати ще немає.
         </div>
         {% else %}
-        <div class="small">
+        <div>
           Цей місяць: <strong>${{ "%.2f"|format(usage_summary.month_spend_usd) }}</strong>
           {% if usage_summary.budget_usd is not none %} з ${{ "%.2f"|format(usage_summary.budget_usd) }}{% endif %}
         </div>
@@ -290,7 +290,7 @@
     <div class="card">
       <div class="card-body">
         <h5 class="card-title">Статус</h5>
-        <div class="text-muted f-12" style="line-height:1.5;">
+        <div class="text-muted" style="line-height:1.5;">
           Востаннє редаговано вручну: {{ automation.updated_at.strftime("%Y-%m-%d") }}.<br>
           {% if automation.repo_url %}
             {% if automation.last_synced_at %}
@@ -331,10 +331,10 @@
       <div class="card-body">
         <h5 class="card-title">Зараз</h5>
         {% if automation.current_stage_override %}
-        <div class="small">{{ automation.current_stage_override }}</div>
+        <div>{{ automation.current_stage_override }}</div>
         <div class="text-muted mt-1 f-12">Вказано вручну в dashboard/SUMMARY.md</div>
         {% else %}
-        <div class="small" style="font-family: var(--bs-font-monospace);">{{ automation.last_commit_message }}</div>
+        <div style="font-family: var(--bs-font-monospace);">{{ automation.last_commit_message }}</div>
         <div class="text-muted mt-1 f-12">
           Останній комміт{% if automation.last_commit_at %} · {{ automation.last_commit_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}
         </div>

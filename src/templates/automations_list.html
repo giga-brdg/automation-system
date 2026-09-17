@@ -83,7 +83,7 @@
       {% for p in pending %}
       <div class="d-flex align-items-center justify-content-between gap-3 bg-white rounded p-2 px-3">
         <div>
-          <a href="{{ p.repo_url }}" class="fw-semibold">{{ p.name }}</a>
+          <a href="{{ p.repo_url }}" class="fw-semibold d-block mb-1">{{ p.name }}</a>
           <div class="text-muted small">Немає {{ p.missing }}</div>
         </div>
         <form method="post" action="{{ url_for('pending_automation_dismiss', pending_id=p.id) }}" class="mb-0">
@@ -108,17 +108,17 @@
           {{ ui.status_badge(a.status) }}
         </div>
         <div>
-          <div class="fw-semibold">{{ a.name }}</div>
+          <div class="fw-semibold mb-1">{{ a.name }}</div>
           <div class="text-muted small" style="display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" title="{{ a.one_liner or '' }}">{{ a.one_liner or "" }}</div>
         </div>
         <div class="align-self-start">{{ sec.security_chip(a.security_review_state, a.security_review_label, compact=True) }}</div>
         <hr class="my-1">
-        <div class="d-flex align-items-center justify-content-between">
-          <div class="d-flex align-items-center gap-1 text-primary fw-semibold small">
-            <i class="ti ti-clock"></i>
-            {% if a.roi and a.roi.measured_value %}{{ a.roi.measured_value }}{% elif a.roi %}оцінка{% else %}—{% endif %}
+        <div class="d-flex align-items-center justify-content-between gap-2">
+          <div class="d-flex align-items-center gap-1 text-primary fw-semibold small text-truncate" style="min-width:0;" title="{{ a.roi.measured_value if a.roi and a.roi.measured_value else '' }}">
+            <i class="ti ti-clock flex-shrink-0"></i>
+            <span class="text-truncate">{% if a.roi and a.roi.measured_value %}{{ a.roi.measured_value }}{% elif a.roi %}оцінка{% else %}—{% endif %}</span>
           </div>
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center gap-2 flex-shrink-0">
             {{ ui.avatar(a.owner.initials, size=20, variant='secondary') }}
             <span class="text-muted small">{{ a.owner.name }}</span>
           </div>
