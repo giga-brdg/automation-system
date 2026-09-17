@@ -46,10 +46,11 @@
   </div>
 </div>
 
-{% if current_user.id == automator.id and (current_user.is_admin or current_user.is_automator) %}
+{% if current_user.id == automator.id %}
 <div class="card mt-3">
   <div class="card-body">
     <h5 class="card-title">Обліковий запис</h5>
+    {% if current_user.is_admin or current_user.is_automator %}
     <div class="fw-semibold small mb-1">API-ключ</div>
     <p class="text-muted small mb-2">
       Для API-синку автоматизацій (заголовок <code>X-API-Key</code>). Показується лише один раз одразу після
@@ -60,6 +61,11 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-light-secondary">Згенерувати новий ключ</button>
     </form>
+    <hr>
+    {% endif %}
+    <a class="btn btn-light-danger d-inline-flex align-items-center gap-1" href="{{ url_for('logout') }}">
+      <i class="ti ti-power"></i> Вийти з акаунта
+    </a>
   </div>
 </div>
 {% endif %}
