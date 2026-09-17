@@ -29,9 +29,16 @@
                 <h6 class="mb-0"><a href="{{ url_for('automator_profile', user_id=current_user.id) }}" class="text-body">{{ current_user.name }}</a></h6>
                 <small class="text-muted">{{ current_user.role.label }}</small>
               </div>
-              <a class="btn btn-icon btn-link-secondary avtar" href="{{ url_for('logout') }}" title="Вийти" aria-label="Вийти">
-                <i class="ti ti-power"></i>
-              </a>
+              <div class="dropdown">
+                <a class="btn btn-icon btn-link-secondary avtar" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Меню користувача">
+                  <i class="ti ti-dots-vertical"></i>
+                </a>
+                <div class="dropdown-menu dropdown-menu-end">
+                  <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('logout') }}">
+                    <i class="ti ti-power"></i> Вийти
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
         </div>
