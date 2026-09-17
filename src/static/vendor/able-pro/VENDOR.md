@@ -32,10 +32,22 @@ override can't retint buttons/badges/alerts/etc. To reproduce or update:
    output here as `css/style.css` / `css/style-preset.css`.
 
 Brand hex used (converted from this app's original OKLCH tokens in the old
-`src/static/style.css`): primary/accent-ink `#4d2809`, success/green
-`#488c54`, warning/amber `#c38300`, danger/red `#c04442`, plus each color's
-`-bg-subtle` (light tint) and `-border-subtle` (mid tint) shades - see the
-git history of the two settings files above for the exact values used.
+`src/static/style.css`): success/green `#488c54`, warning/amber `#c38300`,
+danger/red `#c04442`, plus each color's `-bg-subtle` (light tint) and
+`-border-subtle` (mid tint) shades - see the git history of the two settings
+files above for the exact values used.
+
+**`$primary` was retinted on 2026-09-17** from `#4d2809` to `#b5541f` (design
+audit, `docs/design_audit_2026-09-17.md`, Critical finding #1): the original
+dark chocolate-brown had a contrast ratio of only ~1.34:1 against this app's
+own `--bs-body-color: #1f1a13`, so buttons/links/the active sidebar item read
+as "a slightly different shade of the same text color" instead of a
+distinct accent. `#b5541f` keeps the same warm hue but is lighter and more
+saturated, so it actually pops against both white cards and the cream body
+background. `$primary-text` (the `-emphasis`/`-subtle` family, used for
+readable text *on* a light `bg-primary-subtle` background) intentionally
+stayed at the darker `#4d2809` - that's a different, correct use case
+(contrast on a light tint), not the bug.
 
 Everything else under this directory (fonts, JS) IS a plain, unmodified copy
 of `dist/assets/`. Non-color customizations for this app (surface/neutral

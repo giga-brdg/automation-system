@@ -2,11 +2,18 @@
    state: "none" | "clean" | "medium" | "high" (Automation.security_review_state
    / Skill.security_review_state, src/models.py). Icon changes with state too,
    not just color - a checkmark for clean, an X for a real finding - so the
-   signal doesn't rely on color alone. #}
-{% macro security_chip(state, text) %}
+   signal doesn't rely on color alone.
+   Outline style (not the filled bg-light-* the status badge uses) so this
+   reads as a different axis of information from Status.bs_variant at a
+   glance, not "another badge of the same kind" (design audit, Critical #C-3).
+   compact=True drops the label text for grid density (automations_list.html)
+   - the icon+color+title-tooltip already carry the signal there; the full
+   sentence is kept for automation_detail.html, where there's room and it's
+   the primary content of that card. #}
+{% macro security_chip(state, text, compact=False) %}
 {% set variant = {'none': 'secondary', 'clean': 'success', 'medium': 'warning', 'high': 'danger'}.get(state, 'secondary') %}
 {% set icon = {'none': 'ti-shield', 'clean': 'ti-shield-check', 'medium': 'ti-alert-triangle', 'high': 'ti-shield-x'}.get(state, 'ti-shield') %}
-<span class="badge bg-light-{{ variant }} d-inline-flex align-items-center gap-1" title="{{ text }}">
-  <i class="ti {{ icon }}"></i> {{ text }}
+<span class="badge bg-transparent border border-{{ variant }} text-{{ variant }} d-inline-flex align-items-center gap-1" title="{{ text }}">
+  <i class="ti {{ icon }}"></i>{% if not compact %} {{ text }}{% endif %}
 </span>
 {% endmacro %}

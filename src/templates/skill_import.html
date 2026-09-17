@@ -2,7 +2,7 @@
 {% set active_nav = 'skills' %}
 {% block title %}Синхронізація скіла з GitHub{% endblock %}
 {% block content %}
-<div class="page-title sora">Додати скіл з GitHub</div>
+<div class="page-title">Додати скіл з GitHub</div>
 <div class="page-subtitle mb-3">
   Два формати посилання: звичайний репозиторій — бере SKILL.md з кореня, один скіл;
   посилання на папку (.../tree/гілка/шлях, напр. .../tree/master/.claude/skills) —
@@ -13,11 +13,14 @@
     <form method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="mb-3">
-        <label class="form-label">Посилання на репозиторій або папку</label>
+        <label class="form-label">Посилання на репозиторій або папку <span class="text-danger">*</span></label>
         <input type="url" name="repo_url" class="form-control" required
                placeholder="https://github.com/owner/skill-repo або .../tree/master/.claude/skills">
       </div>
-      <button type="submit" class="btn btn-primary">Синхронізувати</button>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Синхронізувати</button>
+        <a class="btn btn-light-secondary" href="{{ url_for('skills_library') }}">Скасувати</a>
+      </div>
     </form>
   </div>
 </div>

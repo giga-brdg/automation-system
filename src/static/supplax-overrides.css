@@ -61,8 +61,48 @@ a.card:hover {
 
 /* Small first-party helpers kept from the pre-redesign CSS - plain
    typographic/layout classes with no Bootstrap-name collision, so there was
-   no reason to reinvent them with utility classes at every call site. */
-.sora { font-family: "Inter var", "Inter", system-ui, sans-serif; }
+   no reason to reinvent them with utility classes at every call site.
+   (.sora used to load an actual Sora font; Inter now covers the whole app
+   via style.css's own --bs-font-sans-serif, so that class was a no-op left
+   over from before the redesign - removed 2026-09-17, see design audit.) */
 .page-title { font-size: 21px; font-weight: 600; }
 .page-subtitle { font-size: 13.5px; color: #645c51; margin-top: 4px; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+/* Department "pill" - an open-ended, per-name hue (Department.hue in
+   models.py), so it can't be one of Bootstrap's fixed badge variants. Able
+   Pro's own component set has no dynamic-hue tag pattern (checked against
+   the design-system repo's own badge demo page) - this is a deliberate,
+   necessary departure, not a missed convention.
+   Colors come in as CSS custom properties via Department.pill_style /
+   pill_style_active (one shared formula, see models.py), consumed by a real
+   class rule here instead of being hardcoded as literal inline colors -
+   that's what lets :hover/:focus-visible below actually apply; an inline
+   `style="background: ..."` always wins over a class selector, so hover/
+   focus states on a plain inline-styled pill were previously inert. */
+.dept-pill {
+  background: var(--dept-pill-bg);
+  color: var(--dept-pill-fg);
+  border-color: transparent;
+}
+/* Redeclare background/color (not just `filter`) at the same
+   class+pseudo-class specificity as Able Pro's own `.btn:hover` rule -
+   that rule's background reads an unset --bs-btn-hover-bg (these pills carry
+   no btn-* variant class) and would otherwise win on source order and drop
+   the pill to transparent on hover/focus instead of just dimming it. */
+.dept-pill:hover,
+.dept-pill:focus-visible {
+  background: var(--dept-pill-bg);
+  color: var(--dept-pill-fg);
+  filter: brightness(0.94);
+}
+
+/* Able Pro's own :focus-visible rings reuse --bs-primary (component-active-bg
+   in the theme's Sass), so "this field is focused" and "this is the brand
+   accent color" were visually the same signal - confirmed on the auth pages
+   in the visual audit. A distinct, desaturated focus color keeps those two
+   meanings apart without touching the Sass build. */
+:focus-visible {
+  outline: 2px solid #6b7280;
+  outline-offset: 1px;
+}

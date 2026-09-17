@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% set active_nav = 'registry' %}
+{% set errors = errors or {} %}
 {% block title %}{{ "Редагувати автоматизацію" if automation else "Нова автоматизація" }}{% endblock %}
 {% block content %}
-<div class="page-title sora mb-3">{{ "Редагувати: " + automation.name if automation else "Додати автоматизацію" }}</div>
+<div class="page-title mb-3">{{ "Редагувати: " + automation.name if automation else "Додати автоматизацію" }}</div>
 <div class="card" style="max-width: 42rem;">
   <div class="card-body">
-    <form method="post">
+    <form method="post" novalidate>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <h5 class="card-title">Основне</h5>
       {% if automation %}
       <div class="mb-3">
         <label class="form-label">Slug</label>
@@ -14,66 +17,91 @@
       </div>
       {% else %}
       <div class="mb-3">
-        <label class="form-label">Slug (унікальний, латиницею)</label>
-        <input type="text" name="slug" class="form-control" required pattern="[a-z0-9\-]+" placeholder="stage-0-forecast">
+        <label class="form-label">Slug (унікальний, латиницею) <span class="text-danger">*</span></label>
+        <input type="text" name="slug" class="form-control {{ 'is-invalid' if errors.slug }}" required
+               pattern="[a-z0-9\-]+" placeholder="stage-0-forecast" value="{{ form_data.slug if form_data else '' }}">
+        {% if errors.slug %}<div class="invalid-feedback">{{ errors.slug }}</div>{% endif %}
       </div>
       {% endif %}
       <div class="mb-3">
-        <label class="form-label">Назва</label>
-        <input type="text" name="name" class="form-control" required value="{{ automation.name if automation else '' }}">
+        <label class="form-label">Назва <span class="text-danger">*</span></label>
+        <input type="text" name="name" class="form-control {{ 'is-invalid' if errors.name }}" required
+               value="{{ form_data.name if form_data else (automation.name if automation else '') }}">
+        {% if errors.name %}<div class="invalid-feedback">{{ errors.name }}</div>{% endif %}
       </div>
       <div class="mb-3">
         <label class="form-label">Короткий опис</label>
-        <input type="text" name="one_liner" class="form-control" value="{{ automation.one_liner if automation else '' }}">
+        <input type="text" name="one_liner" class="form-control"
+               value="{{ form_data.one_liner if form_data else (automation.one_liner if automation else '') }}">
       </div>
       <div class="mb-3">
         <label class="form-label">Власник</label>
         {% if current_user.is_admin %}
         <select name="owner_id" class="form-select">
           {% for u in users %}
-          <option value="{{ u.id }}" {% if automation and automation.owner_id == u.id %}selected{% elif not automation and u.id == current_user.id %}selected{% endif %}>{{ u.name }}</option>
+          {% set selected_id = (form_data.owner_id|int) if form_data and form_data.owner_id else (automation.owner_id if automation else current_user.id) %}
+          <option value="{{ u.id }}" {% if u.id == selected_id %}selected{% endif %}>{{ u.name }}</option>
           {% endfor %}
         </select>
         {% else %}
         <input type="text" class="form-control" value="{{ current_user.name }}" disabled>
         {% endif %}
       </div>
-      <div class="mb-3">
+      <div class="mb-0">
         <label class="form-label">Статус</label>
         <select name="status" class="form-select">
           {% for s in statuses %}
-          <option value="{{ s.value }}" {% if automation and automation.status == s %}selected{% endif %}>{{ s.label }}</option>
+          {% set selected_status = form_data.status if form_data else (automation.status.value if automation else none) %}
+          <option value="{{ s.value }}" {% if s.value == selected_status %}selected{% endif %}>{{ s.label }}</option>
           {% endfor %}
         </select>
       </div>
+
+      <hr class="my-3">
+      <h5 class="card-title">Категорії</h5>
       <div class="mb-3">
         <label class="form-label">Відділ(и)</label>
-        <select name="departments" class="form-select" multiple size="4">
+        {% set selected_dept_ids = form_data.getlist('departments')|map('int')|list if form_data else (automation.departments|map(attribute='id')|list if automation else []) %}
+        <div class="d-flex flex-column gap-1">
           {% for d in departments %}
-          <option value="{{ d.id }}" {% if automation and d in automation.departments %}selected{% endif %}>{{ d.name }}</option>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="departments" value="{{ d.id }}" id="dept-{{ d.id }}"
+                   {% if d.id in selected_dept_ids %}checked{% endif %}>
+            <label class="form-check-label" for="dept-{{ d.id }}">{{ d.name }}</label>
+          </div>
           {% endfor %}
-        </select>
+        </div>
       </div>
-      <div class="mb-3">
+      <div class="mb-0">
         <label class="form-label">Скіли, що використовуються</label>
-        <select name="skills" class="form-select" multiple size="3">
+        {% set selected_skill_ids = form_data.getlist('skills')|map('int')|list if form_data else (automation.skills|map(attribute='id')|list if automation else []) %}
+        <div class="d-flex flex-column gap-1">
           {% for s in skills %}
-          <option value="{{ s.id }}" {% if automation and s in automation.skills %}selected{% endif %}>{{ s.name }}</option>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="skills" value="{{ s.id }}" id="skill-{{ s.id }}"
+                   {% if s.id in selected_skill_ids %}checked{% endif %}>
+            <label class="form-check-label" for="skill-{{ s.id }}">{{ s.name }}</label>
+          </div>
           {% endfor %}
-        </select>
+        </div>
+      </div>
+
+      <hr class="my-3">
+      <h5 class="card-title">Інтеграції та трекінг</h5>
+      <div class="mb-3">
+        <label class="form-label">Посилання на репозиторій</label>
+        <input type="url" name="repo_url" class="form-control"
+               value="{{ form_data.repo_url if form_data else (automation.repo_url if automation else '') }}">
       </div>
       <div class="mb-3">
-        <label class="form-label">Посилання на репозиторій (необов'язково)</label>
-        <input type="url" name="repo_url" class="form-control" value="{{ automation.repo_url if automation else '' }}">
+        <label class="form-label">Посилання на задачу в ClickUp</label>
+        <input type="url" name="clickup_url" class="form-control"
+               value="{{ form_data.clickup_url if form_data else (automation.clickup_url if automation else '') }}">
       </div>
       <div class="mb-3">
-        <label class="form-label">Посилання на задачу в ClickUp (необов'язково)</label>
-        <input type="url" name="clickup_url" class="form-control" value="{{ automation.clickup_url if automation else '' }}">
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Проєкт в ai-usage-collector (необов'язково, для трекінгу токенів)</label>
+        <label class="form-label">Проєкт в ai-usage-collector (для трекінгу токенів)</label>
         {% if ai_usage_projects %}
-        <select name="ai_usage_project_id" class="form-select">
+        <select name="ai_usage_project_id" class="form-select {{ 'is-invalid' if errors.ai_usage_project_id }}">
           <option value="">— не прив'язано —</option>
           {% set linked_ids = ai_usage_projects|map(attribute='id')|list %}
           {% if automation and automation.ai_usage_project_id and automation.ai_usage_project_id not in linked_ids %}
@@ -88,47 +116,60 @@
           {% endfor %}
         </select>
         {% else %}
-        <input type="number" name="ai_usage_project_id" class="form-control" min="1"
-               value="{{ automation.ai_usage_project_id if automation and automation.ai_usage_project_id else '' }}"
+        <input type="number" name="ai_usage_project_id" class="form-control {{ 'is-invalid' if errors.ai_usage_project_id }}" min="1"
+               value="{{ form_data.ai_usage_project_id if form_data else (automation.ai_usage_project_id if automation and automation.ai_usage_project_id else '') }}"
                placeholder="ID вручну — ai-usage-collector зараз недоступний">
         <div class="form-text">Не вдалося отримати живий список проєктів — впиши ID вручну.</div>
         {% endif %}
+        {% if errors.ai_usage_project_id %}<div class="invalid-feedback d-block">{{ errors.ai_usage_project_id }}</div>{% endif %}
       </div>
       <div class="mb-3">
-        <label class="form-label">Місячний бюджет на токени, $ (необов'язково)</label>
-        <input type="number" step="0.01" min="0" name="monthly_token_budget_usd" class="form-control"
-               value="{{ automation.monthly_token_budget_usd if automation and automation.monthly_token_budget_usd else '' }}">
+        <label class="form-label">Місячний бюджет на токени, $</label>
+        <input type="number" step="0.01" min="0" name="monthly_token_budget_usd"
+               class="form-control {{ 'is-invalid' if errors.monthly_token_budget_usd }}"
+               value="{{ form_data.monthly_token_budget_usd if form_data else (automation.monthly_token_budget_usd if automation and automation.monthly_token_budget_usd else '') }}">
+        {% if errors.monthly_token_budget_usd %}<div class="invalid-feedback">{{ errors.monthly_token_budget_usd }}</div>{% endif %}
       </div>
-      <div class="mb-3">
-        <label class="form-label">Множник для сплеску витрат (необов'язково, типово {{ default_spike_multiplier }}x)</label>
-        <input type="number" step="0.1" min="1" name="token_spike_multiplier" class="form-control"
-               value="{{ automation.token_spike_multiplier if automation and automation.token_spike_multiplier else '' }}">
+      <div class="mb-0">
+        <label class="form-label">Множник для сплеску витрат (типово {{ default_spike_multiplier }}x)</label>
+        <input type="number" step="0.1" min="1" name="token_spike_multiplier"
+               class="form-control {{ 'is-invalid' if errors.token_spike_multiplier }}"
+               value="{{ form_data.token_spike_multiplier if form_data else (automation.token_spike_multiplier if automation and automation.token_spike_multiplier else '') }}">
+        {% if errors.token_spike_multiplier %}<div class="invalid-feedback">{{ errors.token_spike_multiplier }}</div>{% endif %}
       </div>
-      <div class="card mb-3">
-        <div class="card-header">ROI (можна оцінку, без реальних цифр)</div>
+
+      <div class="card mt-3 mb-3">
+        <h5 class="card-header mb-0">ROI (можна оцінку, без реальних цифр)</h5>
         <div class="card-body">
           <div class="mb-3">
             <label class="form-label">Гіпотеза</label>
-            <textarea name="hypothesis" class="form-control" rows="2">{{ automation.roi.hypothesis if automation and automation.roi else '' }}</textarea>
+            <textarea name="hypothesis" class="form-control" rows="2">{{ form_data.hypothesis if form_data else (automation.roi.hypothesis if automation and automation.roi else '') }}</textarea>
           </div>
           <div class="mb-3">
             <label class="form-label">Як вимірюємо</label>
-            <textarea name="metric_description" class="form-control" rows="2">{{ automation.roi.metric_description if automation and automation.roi else '' }}</textarea>
+            <textarea name="metric_description" class="form-control" rows="2">{{ form_data.metric_description if form_data else (automation.roi.metric_description if automation and automation.roi else '') }}</textarea>
           </div>
           <div class="mb-3">
             <label class="form-label">Стан</label>
+            {% set confidence = form_data.confidence if form_data else (automation.roi.confidence if automation and automation.roi else 'estimated') %}
             <select name="confidence" class="form-select">
-              <option value="estimated" {% if automation and automation.roi and automation.roi.confidence == 'estimated' %}selected{% endif %}>Оцінка</option>
-              <option value="measured" {% if automation and automation.roi and automation.roi.confidence == 'measured' %}selected{% endif %}>Виміряно</option>
+              <option value="estimated" {% if confidence == 'estimated' %}selected{% endif %}>Оцінка</option>
+              <option value="measured" {% if confidence == 'measured' %}selected{% endif %}>Виміряно</option>
             </select>
           </div>
           <div class="mb-0">
-            <label class="form-label">Посилання на презентацію (необов'язково)</label>
-            <input type="url" name="presentation_url" class="form-control" value="{{ automation.roi.presentation_url if automation and automation.roi else '' }}">
+            <label class="form-label">Посилання на презентацію</label>
+            <input type="url" name="presentation_url" class="form-control"
+                   value="{{ form_data.presentation_url if form_data else (automation.roi.presentation_url if automation and automation.roi else '') }}">
           </div>
         </div>
       </div>
-      <button type="submit" class="btn btn-primary">Зберегти</button>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-lg">Зберегти</button>
+        <a class="btn btn-light-secondary btn-lg"
+           href="{{ url_for('automation_detail', slug=automation.slug) if automation else url_for('automations_list') }}">Скасувати</a>
+      </div>
     </form>
   </div>
 </div>

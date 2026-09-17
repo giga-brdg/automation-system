@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-head mb-3">
   <div>
-    <div class="page-title sora">Бібліотека скіллів</div>
+    <div class="page-title">Бібліотека скіллів</div>
     <div class="page-subtitle">Скіли Claude Code, на які спираються автоматизації.</div>
   </div>
   {% if current_user.is_admin or current_user.is_automator %}
@@ -15,25 +15,25 @@
   {% endif %}
 </div>
 
+{% if skills %}
 <div class="mb-3">
   <div class="input-group" style="max-width: 320px;">
     <span class="input-group-text"><i class="ti ti-search"></i></span>
-    <input type="text" class="form-control" placeholder="Пошук скіллів…" disabled>
+    <input type="text" class="form-control" id="skillSearch" placeholder="Пошук скіллів…">
   </div>
 </div>
 
-{% if skills %}
-<div class="row row-cols-1 row-cols-md-3 g-3">
+<div class="row row-cols-1 row-cols-md-3 g-3" id="skillGrid">
   {% for s in skills %}
-  <div class="col">
+  <div class="col skill-card" data-skill-search="{{ (s.name ~ ' ' ~ (s.description or ''))|lower }}">
     <div class="card h-100">
       <div class="card-body d-flex flex-column gap-2">
         <div class="rounded-circle bg-light-secondary d-flex align-items-center justify-content-center" style="width:42px;height:42px;">
           <i class="ti ti-puzzle f-20 text-secondary"></i>
         </div>
-        <div class="fw-semibold sora">{{ s.name }}</div>
+        <div class="fw-semibold">{{ s.name }}</div>
         <div class="text-muted small">{{ s.description }}</div>
-        {% if s.repo_url %}{{ sec.security_chip(s.security_review_state, s.security_review_label) }}{% endif %}
+        {% if s.repo_url %}{{ sec.security_chip(s.security_review_state, s.security_review_label, compact=True) }}{% endif %}
         <div class="d-flex gap-3 align-items-center">
           {% if s.doc_url %}<a href="{{ s.doc_url }}" class="small">Документація →</a>{% endif %}
           {% if s.repo_url %}<a href="{{ s.repo_url }}" class="small">GitHub →</a>{% endif %}
@@ -43,12 +43,30 @@
           <i class="ti ti-download"></i> Завантажити
         </a>
         {% endif %}
-        <div class="text-muted mt-auto" style="font-size:11px;">Використовується в {{ s.automations|length }} автоматизаці{{ "ї" if s.automations|length == 1 else "ях" }}</div>
+        <div class="text-muted mt-auto f-12">Використовується в {{ s.automations|length }} автоматизаці{{ "ї" if s.automations|length == 1 else "ях" }}</div>
       </div>
     </div>
   </div>
   {% endfor %}
 </div>
+<p class="text-muted text-center py-4 d-none" id="skillNoMatch">Нічого не знайдено.</p>
+<script>
+(function () {
+  var input = document.getElementById('skillSearch');
+  var cards = document.querySelectorAll('#skillGrid .skill-card');
+  var noMatch = document.getElementById('skillNoMatch');
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    var visible = 0;
+    cards.forEach(function (card) {
+      var match = !q || card.getAttribute('data-skill-search').indexOf(q) !== -1;
+      card.classList.toggle('d-none', !match);
+      if (match) visible++;
+    });
+    noMatch.classList.toggle('d-none', visible !== 0);
+  });
+})();
+</script>
 {% else %}
 <div class="text-center text-muted py-5">
   <p>Скіллів ще не додано.</p>

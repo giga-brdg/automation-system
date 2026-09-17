@@ -2,50 +2,82 @@
 {% set active_nav = 'registry' %}
 {% block title %}Stage 0: {{ automation.name }}{% endblock %}
 {% block content %}
-<div class="page-title sora">Stage 0 — інтервʼю: {{ automation.name }}</div>
+<div class="page-title">Stage 0 — інтервʼю: {{ automation.name }}</div>
 <p class="page-subtitle mb-3">
   Ті самі 9 фаз, що і в skill-і <code>stage-0-supplax</code>. Заповнене тут stage-0-supplax
   прочитає сам через API й не питатиме про це ще раз під час бутстрапу репозиторію.
   Питання без відповіді просто лишаться порожніми — skill спитає про них наживо.
 </p>
+
+<ul class="nav nav-pills nav-justified mb-3" role="tablist">
+  {% for phase in phases %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {{ 'active' if loop.first }}" id="phase-{{ phase.num }}-tab" data-bs-toggle="tab"
+            data-bs-target="#phase-{{ phase.num }}" type="button" role="tab"
+            aria-controls="phase-{{ phase.num }}" aria-selected="{{ 'true' if loop.first else 'false' }}">
+      Фаза {{ phase.num }}
+    </button>
+  </li>
+  {% endfor %}
+</ul>
+
 <form method="post">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  {% for phase in phases %}
-  {% set phase_answers = answers.get(phase.num|string, {}) %}
-  <div class="card mb-3">
-    <div class="card-header">Фаза {{ phase.num }} — {{ phase.title }}</div>
-    <div class="card-body">
-      {% for q in phase.questions %}
-      {% set field_name = 'p' ~ phase.num ~ '_' ~ q.key %}
-      <div class="mb-3">
-        <label class="form-label">{{ q.label }}</label>
-        {% if q.type == 'text' %}
-        <input type="text" name="{{ field_name }}" class="form-control" value="{{ phase_answers.get(q.key, '') }}">
-        {% elif q.type == 'textarea' %}
-        <textarea name="{{ field_name }}" class="form-control" rows="2">{{ phase_answers.get(q.key, '') }}</textarea>
-        {% elif q.type == 'select' %}
-        <select name="{{ field_name }}" class="form-select">
-          <option value="">— не відповідали —</option>
-          {% for value, opt_label in q.options %}
-          <option value="{{ value }}" {% if phase_answers.get(q.key) == value %}selected{% endif %}>{{ opt_label }}</option>
+  <div class="tab-content">
+    {% for phase in phases %}
+    {% set phase_answers = answers.get(phase.num|string, {}) %}
+    <div class="tab-pane fade {{ 'show active' if loop.first }}" id="phase-{{ phase.num }}" role="tabpanel" aria-labelledby="phase-{{ phase.num }}-tab">
+      <div class="card mb-3">
+        <h5 class="card-header mb-0">Фаза {{ phase.num }} — {{ phase.title }}</h5>
+        <div class="card-body">
+          {% for q in phase.questions %}
+          {% set field_name = 'p' ~ phase.num ~ '_' ~ q.key %}
+          <div class="mb-3">
+            <label class="form-label">{{ q.label }}</label>
+            {% if q.type == 'text' %}
+            <input type="text" name="{{ field_name }}" class="form-control" value="{{ phase_answers.get(q.key, '') }}">
+            {% elif q.type == 'textarea' %}
+            <textarea name="{{ field_name }}" class="form-control" rows="2">{{ phase_answers.get(q.key, '') }}</textarea>
+            {% elif q.type == 'select' %}
+            <select name="{{ field_name }}" class="form-select">
+              <option value="">— не відповідали —</option>
+              {% for value, opt_label in q.options %}
+              <option value="{{ value }}" {% if phase_answers.get(q.key) == value %}selected{% endif %}>{{ opt_label }}</option>
+              {% endfor %}
+            </select>
+            {% if q.options|selectattr('0', 'equalto', 'other')|list %}
+            <input type="text" name="{{ field_name }}_other" class="form-control mt-2" placeholder="Уточни, якщо обрав «Інше»"
+                   value="{{ phase_answers.get(q.key ~ '_other', '') }}">
+            {% endif %}
+            {% elif q.type == 'multiselect' %}
+            {% set selected_values = phase_answers.get(q.key, []) %}
+            <div class="d-flex flex-column gap-1">
+              {% for value, opt_label in q.options %}
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="{{ field_name }}" value="{{ value }}"
+                       id="{{ field_name }}-{{ value }}" {% if value in selected_values %}checked{% endif %}>
+                <label class="form-check-label" for="{{ field_name }}-{{ value }}">{{ opt_label }}</label>
+              </div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
           {% endfor %}
-        </select>
-        {% if q.options|selectattr('0', 'equalto', 'other')|list %}
-        <input type="text" name="{{ field_name }}_other" class="form-control mt-2" placeholder="Уточни, якщо обрав «Інше»"
-               value="{{ phase_answers.get(q.key ~ '_other', '') }}">
+        </div>
+      </div>
+      <div class="d-flex justify-content-between mb-3">
+        {% if not loop.first %}
+        <button type="button" class="btn btn-light-secondary" data-bs-toggle="tab" data-bs-target="#phase-{{ phase.num - 1 }}">← Фаза {{ phase.num - 1 }}</button>
+        {% else %}
+        <span></span>
         {% endif %}
-        {% elif q.type == 'multiselect' %}
-        <select name="{{ field_name }}" class="form-select" multiple size="{{ q.options|length }}">
-          {% for value, opt_label in q.options %}
-          <option value="{{ value }}" {% if value in phase_answers.get(q.key, []) %}selected{% endif %}>{{ opt_label }}</option>
-          {% endfor %}
-        </select>
+        {% if not loop.last %}
+        <button type="button" class="btn btn-light-secondary" data-bs-toggle="tab" data-bs-target="#phase-{{ phase.num + 1 }}">Фаза {{ phase.num + 1 }} →</button>
         {% endif %}
       </div>
-      {% endfor %}
     </div>
+    {% endfor %}
   </div>
-  {% endfor %}
   <div class="d-flex gap-2 align-items-center">
     <button type="submit" class="btn btn-primary">Зберегти відповіді</button>
     <a class="btn btn-light-secondary" href="{{ url_for('automation_detail', slug=automation.slug) }}">Пропустити, заповнити пізніше</a>

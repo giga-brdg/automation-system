@@ -160,7 +160,9 @@ class TestPendingAutomations:
             assert Automation.query.count() == 0
             pending = PendingAutomation.query.filter_by(slug="half-done").first()
             assert pending is not None
-            assert pending.missing == "dashboard/SUMMARY.md (стейдж-0 пройдено)"
+            assert pending.missing == (
+                "dashboard/SUMMARY.md (стейдж-0 пройдено) — bootstrap почато (є PIPELINE.md), але не завершено."
+            )
             assert pending.dismissed is False
 
     def test_repo_with_neither_file_is_still_tracked_as_pending(self, app, monkeypatch):
@@ -179,7 +181,9 @@ class TestPendingAutomations:
             assert "1 неповних" in result.output
             pending = PendingAutomation.query.filter_by(slug="maybe-an-automation").first()
             assert pending is not None
-            assert pending.missing == "dashboard/SUMMARY.md (стейдж-0 ще не проходив)"
+            assert pending.missing == (
+                "dashboard/SUMMARY.md (стейдж-0 ще не проходив) — bootstrap ще не починався (немає PIPELINE.md)."
+            )
 
     def test_an_archived_repo_is_skipped_and_not_tracked(self, app, monkeypatch):
         with app.app_context():
@@ -270,6 +274,26 @@ class TestPendingAutomationDismiss:
         client.post("/login", data={"email": "viewer@x.com", "password": "pw12345", "csrf_token": token})
         resp = client.post(f"/automations/pending/{pending_id}/dismiss", data={"csrf_token": token})
         assert resp.status_code == 403
+
+    def test_a_viewer_does_not_see_the_pending_block_at_all(self, app, client, monkeypatch):
+        """Design audit, Critical #3: the pending-sync block used to render
+        for every role (only its dismiss button was gated), so a Viewer saw
+        a wall of internal onboarding debris with no action available on it.
+        The whole block is now gated the same way as the button."""
+        import re
+
+        with app.app_context():
+            _make_user("viewer@x.com", "Viewer", role=Role.VIEWER)
+            db.session.add(PendingAutomation(slug="half-done", name="half-done",
+                                              repo_url="https://github.com/giga-brdg/half-done",
+                                              missing="dashboard/SUMMARY.md"))
+            db.session.commit()
+        token_html = client.get("/login").get_data(as_text=True)
+        token = re.search(r'name="csrf_token" value="([^"]+)"', token_html).group(1)
+        client.post("/login", data={"email": "viewer@x.com", "password": "pw12345", "csrf_token": token})
+        html = client.get("/automations").get_data(as_text=True)
+        assert "half-done" not in html
+        assert "Виявлено в GitHub" not in html
 
 
 class TestSyncGithubOrgButton:

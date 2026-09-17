@@ -2,12 +2,13 @@
 {% set active_nav = 'departments' %}
 {% block title %}Відділи{% endblock %}
 {% block content %}
-<div class="page-title sora">Відділи</div>
+<div class="page-title">Відділи</div>
 <div class="page-subtitle mb-3">
   Створюються самі при першій синхронізації чи додаванні автоматизації. Тут можна перейменувати
   або об'єднати дублі (якщо хтось опечатався в назві).
 </div>
 
+{% if departments %}
 <div class="card mb-4">
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">
@@ -15,7 +16,7 @@
       <tbody>
         {% for d in departments %}
         <tr>
-          <td><span class="badge" style="{{ d.pill_style }}">&nbsp;&nbsp;&nbsp;</span></td>
+          <td><span class="badge dept-pill" style="{{ d.pill_style }}">&nbsp;&nbsp;&nbsp;</span></td>
           <td>{{ d.name }}</td>
           <td>{{ d.automations|length }}</td>
           <td>
@@ -39,8 +40,9 @@
   </div>
 </div>
 
+{% if departments|length > 1 %}
 <div class="card" style="max-width: 32rem;">
-  <div class="card-header">Об'єднати дублі</div>
+  <h5 class="card-header">Об'єднати дублі</h5>
   <div class="card-body">
     <form method="post" action="{{ url_for('department_merge') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -60,4 +62,11 @@
     </form>
   </div>
 </div>
+{% endif %}
+{% else %}
+<div class="text-center text-muted py-5">
+  <p class="mb-0">Поки жодного відділу немає — вони створюються самі при першій синхронізації чи
+    додаванні автоматизації.</p>
+</div>
+{% endif %}
 {% endblock %}

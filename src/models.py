@@ -138,7 +138,14 @@ class Department(db.Model):
 
     @property
     def pill_style(self):
-        return f"background: oklch(93% 0.03 {self.hue}); color: oklch(35% 0.09 {self.hue});"
+        return f"--dept-pill-bg: oklch(93% 0.03 {self.hue}); --dept-pill-fg: oklch(35% 0.09 {self.hue});"
+
+    @property
+    def pill_style_active(self):
+        """Same hue formula as pill_style, solid instead of tinted - for a
+        pressed/selected filter pill. Kept as a second property (not derived
+        in the template) so there's one source of truth for the hue math."""
+        return f"--dept-pill-bg: oklch(35% 0.09 {self.hue}); --dept-pill-fg: #fff;"
 
 
 automation_skills = db.Table(

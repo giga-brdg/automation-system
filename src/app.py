@@ -383,8 +383,12 @@ def run_github_org_sync(app, owner):
                     # dismiss route below, which this loop never overrides.
                     pipeline_text = github_sync.fetch_raw_file(
                         owner, repo["name"], "PIPELINE.md", repo["default_branch"])
-                    missing = ("dashboard/SUMMARY.md (стейдж-0 пройдено)" if pipeline_text is not None
-                               else "dashboard/SUMMARY.md (стейдж-0 ще не проходив)")
+                    missing = (
+                        "dashboard/SUMMARY.md (стейдж-0 пройдено) — bootstrap почато (є PIPELINE.md), "
+                        "але не завершено." if pipeline_text is not None
+                        else "dashboard/SUMMARY.md (стейдж-0 ще не проходив) — bootstrap ще не починався "
+                        "(немає PIPELINE.md)."
+                    )
                     existing_pending = PendingAutomation.query.filter_by(repo_url=repo_url).first()
                     if existing_pending is None:
                         existing_pending = PendingAutomation(
@@ -576,11 +580,21 @@ def register_routes(app):
         departments = Department.query.order_by(Department.name).all()
         pending = (PendingAutomation.query.filter_by(dismissed=False)
                    .order_by(PendingAutomation.discovered_at.desc()).all())
+        # Portfolio-level KPI strip (design audit, Critical #4): `counts` was
+        # already computed above but only ever spent on the status <select>'s
+        # parenthetical text - nothing on this page gave an at-a-glance signal
+        # of portfolio health before. total_count is unfiltered (all
+        # automations regardless of the current search/status/department
+        # filter), matching how `counts` itself already behaves.
+        total_count = Automation.query.count()
+        needs_review_count = Automation.query.filter(Automation.security_review_at.is_(None)).count()
         return render_template(
             "automations_list.html",
             automations=automations,
             statuses=Status,
             counts=counts,
+            total_count=total_count,
+            needs_review_count=needs_review_count,
             departments=departments,
             active_status=status_filter,
             active_department=dept_filter,
@@ -609,6 +623,41 @@ def register_routes(app):
             app.logger.exception("automations_sync_github_org: failed for %s", owner)
             flash(f"Не вдалося отримати список репозиторіїв «{owner}».", "error")
         return redirect(url_for("automations_list"))
+
+    def validate_automation_form(form, automation=None):
+        """Field -> error message, for the things that would otherwise either
+        silently corrupt data (a bad numeric string past a Numeric column) or
+        crash the request outright at commit time (a duplicate slug hitting
+        the DB's own UNIQUE constraint as an unhandled IntegrityError). Not a
+        full validation framework - just the concrete failure modes this form
+        could actually hit, checked before apply_manual_form touches the DB."""
+        errors = {}
+        if not form.get("name", "").strip():
+            errors["name"] = "Вкажи назву."
+
+        if automation is None:
+            slug = form.get("slug", "").strip()
+            if not slug:
+                errors["slug"] = "Вкажи slug."
+            elif not re.fullmatch(r"[a-z0-9-]+", slug):
+                errors["slug"] = "Тільки латинські малі літери, цифри й дефіс."
+            elif Automation.query.filter_by(slug=slug).first():
+                errors["slug"] = f"Автоматизація зі slug «{slug}» вже існує."
+
+        for field, label in [("monthly_token_budget_usd", "Місячний бюджет"),
+                              ("token_spike_multiplier", "Множник сплеску")]:
+            raw = form.get(field, "").strip()
+            if raw:
+                try:
+                    float(raw)
+                except ValueError:
+                    errors[field] = f"{label}: введи число."
+
+        raw_usage_id = form.get("ai_usage_project_id", "").strip()
+        if raw_usage_id and not raw_usage_id.isdigit():
+            errors["ai_usage_project_id"] = "ID проєкту: тільки цифри."
+
+        return errors
 
     def apply_manual_form(automation, form):
         automation.name = form["name"].strip()
@@ -658,16 +707,23 @@ def register_routes(app):
         departments = Department.query.order_by(Department.name).all()
         skills = Skill.query.order_by(Skill.name).all()
         if request.method == "POST":
-            automation = Automation(slug=request.form["slug"].strip(), owner_id=current_user.id)
-            apply_manual_form(automation, request.form)
-            db.session.add(automation)
-            db.session.commit()
-            # Straight to the Stage 0 interview next, not the detail page -
-            # this is the point where answering it is cheapest (the automator
-            # is already here filling in the basics), and stage0_form.html
-            # itself links onward to automation_detail so it's a detour, not
-            # a dead end.
-            return redirect(url_for("automation_stage0", slug=automation.slug))
+            errors = validate_automation_form(request.form)
+            if not errors:
+                automation = Automation(slug=request.form["slug"].strip(), owner_id=current_user.id)
+                apply_manual_form(automation, request.form)
+                db.session.add(automation)
+                db.session.commit()
+                # Straight to the Stage 0 interview next, not the detail page -
+                # this is the point where answering it is cheapest (the automator
+                # is already here filling in the basics), and stage0_form.html
+                # itself links onward to automation_detail so it's a detour, not
+                # a dead end.
+                return redirect(url_for("automation_stage0", slug=automation.slug))
+            flash("Форма містить помилки - перевір позначені поля.", "error")
+            return render_template("automation_form.html", departments=departments, skills=skills,
+                                    users=users, statuses=Status, automation=None, form_data=request.form,
+                                    errors=errors, default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
+                                    ai_usage_projects=ai_usage.list_projects())
         return render_template("automation_form.html", departments=departments, skills=skills,
                                 users=users, statuses=Status, automation=None,
                                 default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
@@ -683,9 +739,16 @@ def register_routes(app):
         departments = Department.query.order_by(Department.name).all()
         skills = Skill.query.order_by(Skill.name).all()
         if request.method == "POST":
-            apply_manual_form(automation, request.form)
-            db.session.commit()
-            return redirect(url_for("automation_detail", slug=automation.slug))
+            errors = validate_automation_form(request.form, automation=automation)
+            if not errors:
+                apply_manual_form(automation, request.form)
+                db.session.commit()
+                return redirect(url_for("automation_detail", slug=automation.slug))
+            flash("Форма містить помилки - перевір позначені поля.", "error")
+            return render_template("automation_form.html", departments=departments, skills=skills,
+                                    users=users, statuses=Status, automation=automation, form_data=request.form,
+                                    errors=errors, default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
+                                    ai_usage_projects=ai_usage.list_projects())
         return render_template("automation_form.html", departments=departments, skills=skills,
                                 users=users, statuses=Status, automation=automation,
                                 default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,

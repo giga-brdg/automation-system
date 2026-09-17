@@ -2,7 +2,7 @@
 {% set active_nav = 'registry' %}
 {% block title %}Синхронізація з GitHub{% endblock %}
 {% block content %}
-<div class="page-title sora">Синхронізувати з GitHub</div>
+<div class="page-title">Синхронізувати з GitHub</div>
 <div class="page-subtitle mb-3">
   Візьме README.md і dashboard/ROI.md з репозиторію (те, що вже написав stage-0-supplax) і заповнить картку сам.
 </div>
@@ -11,7 +11,7 @@
     <form method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="mb-3">
-        <label class="form-label">Посилання на репозиторій</label>
+        <label class="form-label">Посилання на репозиторій <span class="text-danger">*</span></label>
         <input type="url" name="repo_url" class="form-control" required placeholder="https://github.com/owner/repo">
       </div>
       <div class="mb-3">
@@ -46,11 +46,19 @@
       <div class="mb-3">
         <label class="form-label">Відділ(и)</label>
         <div class="form-text mb-1">порожньо — взяти з dashboard/SUMMARY.md, інакше вкажи сам</div>
-        <select name="departments" class="form-select" multiple size="4">
-          {% for d in departments %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}
-        </select>
+        <div class="d-flex flex-column gap-1">
+          {% for d in departments %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="departments" value="{{ d.id }}" id="idept-{{ d.id }}">
+            <label class="form-check-label" for="idept-{{ d.id }}">{{ d.name }}</label>
+          </div>
+          {% endfor %}
+        </div>
       </div>
-      <button type="submit" class="btn btn-primary">Синхронізувати</button>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">Синхронізувати</button>
+        <a class="btn btn-light-secondary" href="{{ url_for('automations_list') }}">Скасувати</a>
+      </div>
     </form>
   </div>
 </div>
