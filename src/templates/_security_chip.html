@@ -13,7 +13,10 @@
 {% macro security_chip(state, text, compact=False) %}
 {% set variant = {'none': 'secondary', 'clean': 'success', 'medium': 'warning', 'high': 'danger'}.get(state, 'secondary') %}
 {% set icon = {'none': 'ti-shield', 'clean': 'ti-shield-check', 'medium': 'ti-alert-triangle', 'high': 'ti-shield-x'}.get(state, 'ti-shield') %}
-<span class="badge bg-transparent border border-{{ variant }} text-{{ variant }} d-inline-flex align-items-center gap-1" title="{{ text }}">
+{# .badge's own font-size is 0.75em of context (~10.5px here) - bumping it
+   with the design system's own f-14 utility scales the icon and the em-based
+   padding together, instead of leaving this the smallest text on the page. #}
+<span class="badge bg-transparent border border-{{ variant }} text-{{ variant }} d-inline-flex align-items-center gap-1 f-14" title="{{ text }}">
   <i class="ti {{ icon }}"></i>{% if not compact %} {{ text }}{% endif %}
 </span>
 {% endmacro %}

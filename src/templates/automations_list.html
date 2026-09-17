@@ -114,7 +114,7 @@
         <div class="align-self-start">{{ sec.security_chip(a.security_review_state, a.security_review_label, compact=True) }}</div>
         <hr class="my-1">
         <div class="d-flex align-items-center justify-content-between gap-2">
-          <div class="d-flex align-items-center gap-1 text-primary fw-semibold small text-truncate" style="min-width:0;" title="{{ a.roi.measured_value if a.roi and a.roi.measured_value else '' }}">
+          <div class="d-flex align-items-center gap-1 text-primary fw-semibold text-truncate" style="min-width:0;" title="{{ a.roi.measured_value if a.roi and a.roi.measured_value else '' }}">
             <i class="ti ti-clock flex-shrink-0"></i>
             <span class="text-truncate">{% if a.roi and a.roi.measured_value %}{{ a.roi.measured_value }}{% elif a.roi %}оцінка{% else %}—{% endif %}</span>
           </div>
