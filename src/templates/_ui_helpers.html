@@ -2,8 +2,8 @@
    status badge and initials avatar were previously hand-repeated per template with
    drifting size/variant choices; kept together so a future tweak is one edit. #}
 
-{% macro status_badge(status) %}
-<span class="badge bg-light-{{ status.bs_variant }}">{{ status.label }}</span>
+{% macro status_badge(status, extra_class='') %}
+<span class="badge bg-light-{{ status.bs_variant }} {{ extra_class }}">{{ status.label }}</span>
 {% endmacro %}
 
 {% macro avatar(initials, size=36, variant='primary') %}
