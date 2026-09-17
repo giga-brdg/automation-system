@@ -111,15 +111,17 @@
             {{ ui.status_badge(a.status, extra_class='f-14') }}
           </div>
         </div>
-        <div class="text-muted" style="display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" title="{{ a.one_liner or '' }}">{{ a.one_liner or "" }}</div>
+        <div class="text-muted mt-1" style="display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;" title="{{ a.one_liner or '' }}">{{ a.one_liner or "" }}</div>
         <hr class="my-1">
-        <div class="d-flex align-items-center gap-1 text-primary fw-semibold">
-          <i class="ti ti-clock flex-shrink-0"></i>
-          <span>{% if a.roi and a.roi.measured_value %}{{ a.roi.measured_value }}{% elif a.roi %}оцінка{% else %}—{% endif %}</span>
-        </div>
-        <div class="d-flex align-items-center gap-2">
-          {{ ui.avatar(a.owner.initials, size=28, variant='secondary') }}
-          <span class="text-muted">{{ a.owner.name }}</span>
+        <div class="d-flex align-items-center justify-content-between gap-2">
+          <div class="d-flex align-items-center gap-1 text-primary fw-semibold">
+            <i class="ti ti-clock flex-shrink-0"></i>
+            <span>{% if a.roi and a.roi.measured_value %}{{ a.roi.measured_value }}{% elif a.roi %}оцінка{% else %}—{% endif %}</span>
+          </div>
+          <div class="d-flex align-items-center gap-2 flex-shrink-0">
+            {{ ui.avatar(a.owner.initials, size=28, variant='secondary') }}
+            <span class="text-muted">{{ a.owner.name }}</span>
+          </div>
         </div>
       </div>
     </a>
