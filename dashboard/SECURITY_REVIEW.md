@@ -5,4 +5,4 @@
 
 ## Open Findings
 - High: 0
-- Medium: 22
+- Medium: 16
