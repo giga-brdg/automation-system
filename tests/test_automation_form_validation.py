@@ -73,6 +73,27 @@ class TestAutomationFormValidation:
         with app.app_context():
             assert Automation.query.filter_by(slug="bad-budget").first() is None
 
+    def test_javascript_url_is_dropped_not_stored(self, app, client):
+        """repo_url/clickup_url/presentation_url get rendered straight into an
+        <a href> (automation_detail.html) - a 'javascript:' value must never
+        reach the database, or every viewer who clicks the link runs it."""
+        with app.app_context():
+            _make_user("owner@x.com", "Owner")
+        _login(client, "owner@x.com")
+        token = _new_form_token(client)
+        resp = client.post("/automations/new", data={
+            "csrf_token": token, "slug": "xss-try", "name": "XSS try", "status": "idea",
+            "repo_url": "javascript:alert(document.cookie)",
+            "clickup_url": "javascript:alert(1)",
+            "presentation_url": "javascript:alert(1)",
+        })
+        assert resp.status_code == 302
+        with app.app_context():
+            automation = Automation.query.filter_by(slug="xss-try").first()
+            assert automation.repo_url is None
+            assert automation.clickup_url is None
+            assert automation.roi.presentation_url is None
+
     def test_valid_submission_still_creates_and_redirects_to_stage0(self, app, client):
         with app.app_context():
             _make_user("owner@x.com", "Owner")

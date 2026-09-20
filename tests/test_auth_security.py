@@ -49,8 +49,8 @@ class TestConfirmBruteForce:
         monkeypatch.setattr(telegram, "send_message", lambda *a, **k: True)
         token = _csrf_token(client.get("/register").get_data(as_text=True))
         client.post("/register", data={
-            "name": "New Guy", "email": "new@x.com", "password": "pw12345",
-            "password_confirm": "pw12345", "csrf_token": token,
+            "name": "New Guy", "email": "new@x.com", "password": "pw1234567",
+            "password_confirm": "pw1234567", "csrf_token": token,
         })
 
         confirm_page = client.get("/confirm", query_string={"email": "new@x.com"}).get_data(as_text=True)
@@ -73,8 +73,8 @@ class TestConfirmBruteForce:
 
         token = _csrf_token(client.get("/register").get_data(as_text=True))
         client.post("/register", data={
-            "name": "New Guy", "email": "new@x.com", "password": "pw12345",
-            "password_confirm": "pw12345", "csrf_token": token,
+            "name": "New Guy", "email": "new@x.com", "password": "pw1234567",
+            "password_confirm": "pw1234567", "csrf_token": token,
         })
         with app.app_context():
             user = User.query.filter_by(email="new@x.com").first()
@@ -87,6 +87,31 @@ class TestConfirmBruteForce:
             user = User.query.filter_by(email="new@x.com").first()
             assert user.is_confirmed
             assert user.pending_code_attempts == 0
+
+
+class TestRegisterPasswordLength:
+    def test_rejects_a_password_under_8_chars(self, app, client, monkeypatch):
+        monkeypatch.setattr(telegram, "send_message", lambda *a, **k: True)
+        token = _csrf_token(client.get("/register").get_data(as_text=True))
+        resp = client.post("/register", data={
+            "name": "New Guy", "email": "short@x.com", "password": "short1",
+            "password_confirm": "short1", "csrf_token": token,
+        }, follow_redirects=True)
+
+        assert "щонайменше 8 символів".encode() in resp.data
+        with app.app_context():
+            assert User.query.filter_by(email="short@x.com").first() is None
+
+    def test_accepts_an_8_char_password(self, app, client, monkeypatch):
+        monkeypatch.setattr(telegram, "send_message", lambda *a, **k: True)
+        token = _csrf_token(client.get("/register").get_data(as_text=True))
+        client.post("/register", data={
+            "name": "New Guy", "email": "long@x.com", "password": "eightch1",
+            "password_confirm": "eightch1", "csrf_token": token,
+        })
+
+        with app.app_context():
+            assert User.query.filter_by(email="long@x.com").first() is not None
 
 
 class TestApiKeyRotation:

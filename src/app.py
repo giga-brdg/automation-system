@@ -44,6 +44,19 @@ from .models import (
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+
+def _safe_url(value):
+    """Repo/ClickUp/presentation links get rendered straight into an
+    href (see templates/automation_detail.html etc.) - drop anything not
+    http(s) so a 'javascript:' URL entered via the edit form, the JSON
+    sync API, or a synced repo's own dashboard/ROI.md can't run script in
+    another user's session when they click the link."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    return value if value.lower().startswith(("http://", "https://")) else None
+
+
 # Module-level so register_routes (below) can reach it to exempt the one
 # machine-facing, non-session endpoint (api_sync_automation) - CSRFProtect
 # otherwise checks every POST/PUT/PATCH/DELETE, and that endpoint has no
@@ -275,7 +288,7 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
         automation.roi.metric_description = fields["metric_description"] or automation.roi.metric_description
         automation.roi.confidence = fields["confidence"]
         automation.roi.measured_value = fields["measured_value"] or automation.roi.measured_value
-        automation.roi.presentation_url = fields["presentation_url"] or automation.roi.presentation_url
+        automation.roi.presentation_url = _safe_url(fields["presentation_url"]) or automation.roi.presentation_url
         automation.roi.qualitative_notes = fields["qualitative_notes"] or automation.roi.qualitative_notes
     elif not roi_text:
         warnings.append("dashboard/ROI.md у репозиторії не знайдено.")
@@ -489,6 +502,9 @@ def register_routes(app):
             if not email or not name or not password:
                 flash("Заповни всі поля.", "error")
                 return render_template("register.html")
+            if len(password) < 8:
+                flash("Пароль має бути щонайменше 8 символів.", "error")
+                return render_template("register.html")
             if password != password_confirm:
                 flash("Паролі не збігаються.", "error")
                 return render_template("register.html")
@@ -677,8 +693,8 @@ def register_routes(app):
             automation.owner_id = int(form.get("owner_id") or automation.owner_id)
         else:
             automation.owner_id = current_user.id
-        automation.repo_url = form.get("repo_url", "").strip() or None
-        automation.clickup_url = form.get("clickup_url", "").strip() or None
+        automation.repo_url = _safe_url(form.get("repo_url", ""))
+        automation.clickup_url = _safe_url(form.get("clickup_url", ""))
         raw_usage_project_id = form.get("ai_usage_project_id", "").strip()
         automation.ai_usage_project_id = int(raw_usage_project_id) if raw_usage_project_id.isdigit() else None
         automation.monthly_token_budget_usd = form.get("monthly_token_budget_usd", "").strip() or None
@@ -704,7 +720,7 @@ def register_routes(app):
         automation.roi.hypothesis = form.get("hypothesis", "").strip()
         automation.roi.metric_description = form.get("metric_description", "").strip()
         automation.roi.confidence = form.get("confidence", "estimated")
-        automation.roi.presentation_url = form.get("presentation_url", "").strip() or None
+        automation.roi.presentation_url = _safe_url(form.get("presentation_url", ""))
 
     @app.route("/automations/new", methods=["GET", "POST"])
     @login_required
@@ -1155,8 +1171,10 @@ def register_routes(app):
 
         automation.name = payload.get("name", automation.name)
         automation.one_liner = payload.get("one_liner", automation.one_liner)
-        automation.repo_url = payload.get("repo_url", automation.repo_url)
-        automation.clickup_url = payload.get("clickup_url", automation.clickup_url)
+        if "repo_url" in payload:
+            automation.repo_url = _safe_url(payload["repo_url"])
+        if "clickup_url" in payload:
+            automation.clickup_url = _safe_url(payload["clickup_url"])
         if "status" in payload:
             try:
                 automation.status = Status(payload["status"])
@@ -1193,7 +1211,8 @@ def register_routes(app):
             automation.roi.metric_description = roi.get("metric_description", automation.roi.metric_description)
             automation.roi.confidence = roi.get("confidence", automation.roi.confidence)
             automation.roi.measured_value = roi.get("measured_value", automation.roi.measured_value)
-            automation.roi.presentation_url = roi.get("presentation_url", automation.roi.presentation_url)
+            if "presentation_url" in roi:
+                automation.roi.presentation_url = _safe_url(roi["presentation_url"])
 
         if "comparison" in payload:
             comp = payload["comparison"] or {}
@@ -1646,4 +1665,4 @@ def register_cli(app):
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")
