@@ -118,3 +118,38 @@ a.card:hover {
 .card-accent-start {
   border-left: 3px solid var(--bs-primary) !important;
 }
+
+/* /value dashboard - small chart primitives with no Able Pro equivalent
+   (meter track, independent count bars, diverging net-hours bars), same
+   "necessary departure" reasoning as .dept-pill above. --metric-* are a
+   fixed 4-slot categorical palette (dataviz skill's validated order) for
+   Stage 1's target_metric_type tokens - not swapped for brand colors like
+   --bs-primary, since these need to stay visually distinct from each other
+   more than they need to match the brand. */
+:root {
+  --metric-time: #2a78d6;
+  --metric-conv: #eb6834;
+  --metric-qual: #1baf7a;
+  --metric-cost: #eda100;
+}
+
+.meter-track, .count-bar-track { height: 10px; border-radius: 999px; background: #e3ddd5; overflow: hidden; }
+.meter-fill { height: 100%; border-radius: 999px; background: var(--bs-success); }
+.count-bar-fill { height: 100%; border-radius: 999px; }
+
+.divbar-track { display: flex; align-items: center; height: 16px; }
+.divbar-half { flex: 1; height: 100%; }
+.divbar-half.left { display: flex; justify-content: flex-end; }
+.divbar-half.right { display: flex; justify-content: flex-start; }
+.divbar-fill { height: 100%; border-radius: 3px; }
+.divbar-fill.pos { background: var(--bs-success); }
+.divbar-fill.neg { background: var(--bs-danger); }
+.divbar-fill.est { opacity: .55; }
+.divbar-center { width: 1px; align-self: stretch; background: #c7c0b5; }
+
+.metric-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.metric-pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+.metric-pill-time { background: color-mix(in srgb, var(--metric-time) 14%, transparent); color: var(--metric-time); }
+.metric-pill-conv { background: color-mix(in srgb, var(--metric-conv) 14%, transparent); color: var(--metric-conv); }
+.metric-pill-qual { background: color-mix(in srgb, var(--metric-qual) 14%, transparent); color: var(--metric-qual); }
+.metric-pill-cost { background: color-mix(in srgb, var(--metric-cost) 14%, transparent); color: var(--metric-cost); }

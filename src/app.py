@@ -21,6 +21,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import ai_usage, github_sync, telegram
 from . import stage1_questions
+from . import value_dashboard
 from .extensions import db, login_manager
 from .models import (
     Automation,
@@ -625,6 +626,39 @@ def register_routes(app):
             search=search,
             pending=pending,
         )
+
+    @app.route("/value")
+    @login_required
+    def value_dashboard_page():
+        dept_filter = request.args.get("department", type=int)
+        owner_filter = request.args.get("owner", type=int)
+
+        query = Automation.query
+        if dept_filter:
+            query = query.filter(Automation.departments.any(Department.id == dept_filter))
+        if owner_filter:
+            query = query.filter(Automation.owner_id == owner_filter)
+        automations = query.order_by(Automation.name).all()
+
+        # Filter dropdowns always list every department/owner actually in use,
+        # regardless of the current filter - narrowing to Sales shouldn't make
+        # HR disappear from the dropdown, just from the results.
+        all_automations = Automation.query.all()
+        departments = sorted({d for a in all_automations for d in a.departments}, key=lambda d: d.name)
+        owners = sorted({a.owner for a in all_automations if a.owner}, key=lambda u: u.name)
+
+        context = value_dashboard.build_context(automations)
+        context.update(
+            automations=automations,
+            departments=departments,
+            owners=owners,
+            active_department=dept_filter,
+            active_owner=owner_filter,
+            subscriptions=Subscription.query.order_by(Subscription.name).all(),
+            target_metrics=value_dashboard.target_metrics,
+            metric_pill_class=value_dashboard.METRIC_PILL_CLASS,
+        )
+        return render_template("value_dashboard.html", **context)
 
     @app.route("/automations/sync-github-org", methods=["POST"])
     @login_required

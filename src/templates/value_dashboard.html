@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% import "_ui_helpers.html" as ui %}
+{% set active_nav = 'value' %}
+{% block title %}Цінність{% endblock %}
+{% block content %}
+<div class="page-head mb-3">
+  <div class="page-title">Цінність автоматизацій</div>
+</div>
+
+<form method="get" class="d-flex align-items-center gap-2 flex-wrap mb-3">
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm {{ 'btn-secondary' if not active_department else 'btn-outline-secondary' }} rounded-pill"
+       href="{{ url_for('value_dashboard_page', owner=active_owner) }}">Всі відділи</a>
+    {% for d in departments %}
+    <a class="btn btn-sm rounded-pill dept-pill"
+       style="{{ d.pill_style_active if active_department == d.id else d.pill_style }}"
+       href="{{ url_for('value_dashboard_page', department=d.id, owner=active_owner) }}">{{ d.name }}</a>
+    {% endfor %}
+  </div>
+  <select class="form-select form-select-sm" style="max-width: 220px;" name="owner" onchange="this.form.submit()">
+    <option value="">Всі автоматизатори</option>
+    {% for u in owners %}
+    <option value="{{ u.id }}" {% if active_owner == u.id %}selected{% endif %}>{{ u.name }}</option>
+    {% endfor %}
+  </select>
+  {% if active_department %}<input type="hidden" name="department" value="{{ active_department }}">{% endif %}
+</form>
+
+<div class="card mb-3" style="background: var(--bs-primary-bg-subtle); border-color: var(--bs-primary-border-subtle);">
+  <div class="card-body">
+    <div class="text-muted f-12">Заощаджено часу, на місяць</div>
+    {% if saved_total is not none %}
+    <div class="fw-bold" style="font-size:2.5rem; line-height:1;">{{ "%.1f"|format(saved_total) }} <span class="f-16 text-muted fw-normal">год/міс</span></div>
+    <div class="d-flex gap-3 mt-2 f-13">
+      <span><i class="ti ti-circle-filled text-success f-10"></i> {{ "%.1f"|format(saved_measured) }} год виміряно</span>
+      {% if saved_estimated > 0.05 %}<span><i class="ti ti-circle-filled text-warning f-10"></i> {{ "%.1f"|format(saved_estimated) }} год оцінка</span>{% endif %}
+    </div>
+    {% else %}
+    <div class="fw-bold f-22 text-muted">—</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row row-cols-2 row-cols-md-4 g-2 mb-2">
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Всього автоматизацій</div>
+      <div class="fw-bold f-22">{{ total_n }}</div>
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Виміряно</div>
+      <div class="fw-bold f-22 text-success">{{ measured_n }}</div>
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Оцінка</div>
+      <div class="fw-bold f-22 text-warning">{{ estimated_n }}</div>
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Ще не оцінено</div>
+      <div class="fw-bold f-22 text-muted">{{ none_n }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row row-cols-2 row-cols-md-4 g-2 mb-3">
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Підписки, $/міс</div>
+      <div class="fw-bold f-22">{{ "$%.2f"|format(subs_cost_total) if subs_cost_total is not none else "—" }}</div>
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Токени, $/міс</div>
+      <div class="fw-bold f-22 text-muted">—</div>
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Розробка (одноразово)</div>
+      <div class="fw-bold f-22">{{ "%.1f год"|format(dev_total) if dev_total is not none else "—" }}</div>
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Підтримка, год/міс</div>
+      <div class="fw-bold f-22">{{ "%.1f"|format(maint_total) if maint_total is not none else "—" }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <div class="card h-100 mb-0">
+      <div class="card-body">
+        <h5 class="card-title">Виміряно vs оцінка</h5>
+        {% if confidence_pct is not none %}
+        <div class="fw-bold f-28">{{ confidence_pct }}%</div>
+        <div class="meter-track mt-2"><div class="meter-fill" style="width:{{ confidence_pct }}%"></div></div>
+        {% else %}
+        <div class="text-muted">—</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card h-100 mb-0">
+      <div class="card-body">
+        <h5 class="card-title">Тип цільової метрики</h5>
+        <div class="d-flex flex-column gap-2 mt-2">
+          {% for m in metric_counts %}
+          <div class="d-flex align-items-center gap-2">
+            <div class="f-13 text-muted" style="width:120px; flex-shrink:0;">{{ m.label }}</div>
+            <div class="count-bar-track flex-grow-1"><div class="count-bar-fill" style="width:{{ m.pct }}%; background:var({{ m.css_var }});"></div></div>
+            <div class="fw-semibold f-13" style="width:24px; text-align:right;">{{ m.count }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <h5 class="card-title">Чистий баланс часу на місяць</h5>
+    {% if net_rows %}
+    <div class="d-flex justify-content-between f-11 text-muted mb-2">
+      <span>−{{ "%.0f"|format(net_scale) }} год</span><span>0</span><span>+{{ "%.0f"|format(net_scale) }} год</span>
+    </div>
+    {% for r in net_rows %}
+    {% set is_neg = r.net < 0 %}
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <a class="f-13 text-body text-decoration-none" style="width:220px; flex-shrink:0;" href="{{ url_for('automation_detail', slug=r.automation.slug) }}">
+        {{ r.automation.name }}
+        <span class="badge {{ 'bg-light-success' if r.measured else 'bg-light-warning' }} f-11">{{ "Виміряно" if r.measured else "Оцінка" }}</span>
+      </a>
+      <div class="divbar-track flex-grow-1">
+        <div class="divbar-half left">{% if is_neg %}<div class="divbar-fill neg" style="width:{{ (r.net|abs / net_scale * 100)|round(1) }}%"></div>{% endif %}</div>
+        <div class="divbar-center"></div>
+        <div class="divbar-half right">{% if not is_neg %}<div class="divbar-fill pos {{ '' if r.measured else 'est' }}" style="width:{{ (r.net|abs / net_scale * 100)|round(1) }}%"></div>{% endif %}</div>
+      </div>
+      <div class="fw-semibold f-13 {{ 'text-danger' if is_neg else 'text-success' }}" style="width:90px; text-align:right;">{{ "%+.1f"|format(r.net) }} год/міс</div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="text-muted mb-0">Немає автоматизацій з відомими обома цифрами (заощаджено і підтримка).</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Автоматизація</th>
+          <th>Метрики</th>
+          <th>Статус ROI</th>
+          <th>Значення</th>
+          <th>Витрати часу</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if automations %}
+        {% for a in automations %}
+        {% set metrics = target_metrics(a) %}
+        <tr>
+          <td>
+            <a class="text-body text-decoration-none fw-semibold" href="{{ url_for('automation_detail', slug=a.slug) }}">{{ a.name }}</a>
+            <div class="text-muted f-12">{{ a.departments[0].name if a.departments else "" }}{% if a.departments and a.owner %} · {% endif %}{{ a.owner.name if a.owner }}</div>
+          </td>
+          <td>
+            {% if metrics %}
+            <div class="d-flex flex-wrap gap-1">
+              {% for m in metrics %}
+              <span class="metric-pill {{ metric_pill_class[m] }}"><span class="dot" style="background: currentColor;"></span>{{ ({"time_saved": "Час", "conversion": "Конверсія", "quality": "Якість", "cost": "Витрати"})[m] }}</span>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="badge bg-light-secondary">Невідомо</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if a.roi %}
+              <span class="badge {{ 'bg-light-success' if a.roi.confidence == 'measured' else 'bg-light-warning' }}">{{ "Виміряно" if a.roi.confidence == 'measured' else "Оцінка" }}</span>
+            {% else %}
+              <span class="badge bg-light-secondary">Немає ROI</span>
+            {% endif %}
+          </td>
+          <td class="f-13">
+            {% if a.roi and a.roi.best_hours_saved_per_month is not none %}
+            <div>{{ "%.1f"|format(a.roi.best_hours_saved_per_month) }} год/міс</div>
+            {% endif %}
+            {% if a.roi and a.roi.measured_value %}
+            <div class="{{ 'text-muted f-12' if a.roi.best_hours_saved_per_month is not none else '' }}">{{ a.roi.measured_value }}</div>
+            {% endif %}
+            {% if not a.roi or (a.roi.best_hours_saved_per_month is none and not a.roi.measured_value) %}—{% endif %}
+          </td>
+          <td class="f-13 text-muted">
+            {% if a.roi and (a.roi.dev_hours is not none or a.roi.maintenance_hours_per_month is not none) %}
+              {{ a.roi.dev_hours ~ "г" if a.roi.dev_hours is not none else "—" }} /
+              {{ a.roi.maintenance_hours_per_month ~ "г/міс" if a.roi.maintenance_hours_per_month is not none else "—" }}
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">Немає автоматизацій за цим фільтром.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <h5 class="card-title mb-0">Підписки</h5>
+      {% if current_user.is_admin %}<a class="btn btn-sm btn-light-secondary" href="{{ url_for('subscriptions_list') }}">Керувати</a>{% endif %}
+    </div>
+    {% if subscriptions %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead><tr><th>Назва</th><th>Провайдер</th><th>$/міс</th><th>Автоматизацій</th></tr></thead>
+        <tbody>
+          {% for s in subscriptions %}
+          <tr>
+            <td class="fw-semibold">{{ s.name }}</td>
+            <td>{{ s.provider or "—" }}</td>
+            <td>${{ "%.2f"|format(s.monthly_cost_usd) }}</td>
+            <td>{{ s.automations|length }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted mb-0">Поки жодної підписки не зареєстровано.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

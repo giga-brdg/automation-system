@@ -39,6 +39,12 @@
               <span class="pc-mtext">Автоматизації</span>
             </a>
           </li>
+          <li class="pc-item {{ 'active' if active_nav == 'value' }}">
+            <a href="{{ url_for('value_dashboard_page') }}" class="pc-link">
+              <span class="pc-micon"><i class="ti ti-chart-line"></i></span>
+              <span class="pc-mtext">Цінність</span>
+            </a>
+          </li>
           <li class="pc-item {{ 'active' if active_nav == 'skills' }}">
             <a href="{{ url_for('skills_library') }}" class="pc-link">
               <span class="pc-micon"><i class="ti ti-puzzle"></i></span>
