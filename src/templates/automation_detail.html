@@ -287,6 +287,51 @@
     </div>
     {% endif %}
 
+    {% set has_cost_data = (automation.roi and (automation.roi.dev_hours is not none or automation.roi.maintenance_hours_per_month is not none)) or automation.subscriptions %}
+    {% if has_cost_data %}
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Витрати</h5>
+        {% if automation.roi and automation.roi.dev_hours is not none %}
+        <div class="small">Розробка: <strong>{{ automation.roi.dev_hours }} год</strong> <span class="text-muted">(одноразово)</span></div>
+        {% endif %}
+        {% if automation.roi and automation.roi.maintenance_hours_per_month is not none %}
+        <div class="small">Підтримка: <strong>{{ automation.roi.maintenance_hours_per_month }} год/міс</strong></div>
+        {% endif %}
+        {% if automation.roi and automation.roi.net_hours_per_month is not none %}
+        <div class="small mt-1">
+          Чистий баланс часу:
+          <strong class="{{ 'text-success' if automation.roi.net_hours_per_month >= 0 else 'text-danger' }}">
+            {{ "%+.1f"|format(automation.roi.net_hours_per_month) }} год/міс
+          </strong>
+        </div>
+        {% endif %}
+        {% if automation.subscriptions %}
+        <hr>
+        <div class="text-muted small mb-1">Підписки:</div>
+        <ul class="small mb-0 ps-3">
+          {% for s in automation.subscriptions %}
+          <li>{{ s.name }} — ${{ "%.2f"|format(s.cost_per_automation) }}/міс
+            {% if s.automations|length > 1 %}<span class="text-muted">(поділено на {{ s.automations|length }})</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% if automation.monthly_subscription_cost_usd is not none %}
+        <div class="small mt-1">Разом підписки: <strong>${{ "%.2f"|format(automation.monthly_subscription_cost_usd) }}/міс</strong></div>
+        {% endif %}
+        {% endif %}
+      </div>
+    </div>
+    {% elif current_user.can_manage(automation) %}
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Витрати</h5>
+        <p class="text-muted small mb-2">Витрати на розробку, підтримку чи підписки ще не вказано.</p>
+        <a class="btn btn-sm btn-light-secondary" href="{{ url_for('automation_edit', slug=automation.slug) }}">Додати витрати</a>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card">
       <div class="card-body">
         <h5 class="card-title">Статус</h5>

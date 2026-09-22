@@ -65,11 +65,14 @@ command lives in Railway's project settings, not in git:
   the production database** as of this writing, see `SECURITY.md`'s Known
   Limitations for what breaks until it is. `flask migrate-rename-stage0-to-stage1`
   (renames `automation.stage0_answers` to `stage1_answers` and the `stage-0-supplax`
-  skill row to `stage-1-supplax`, now that the skill itself is Stage 1) and `flask
+  skill row to `stage-1-supplax`, now that the skill itself is Stage 1), `flask
   migrate-roi-time-metrics` (adds `roi_entry`'s five structured time-metric columns —
   `baseline_cycle_minutes`/`baseline_frequency_per_month`/`target_cycle_minutes`/
   `target_frequency_per_month`/`measured_hours_per_month`, see `models.py`'s
-  `ROIEntry`) have **also not yet been run against production** as of this writing).
+  `ROIEntry`), and `flask migrate-cost-metrics` (adds `roi_entry`'s `dev_hours`/
+  `maintenance_hours_per_month` columns and creates the new `subscription`/
+  `automation_subscriptions` tables via `db.create_all()`, see models.py's
+  `Subscription`) have **also not yet been run against production** as of this writing).
   A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without

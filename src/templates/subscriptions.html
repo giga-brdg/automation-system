@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% set active_nav = 'subscriptions' %}
+{% block title %}Підписки{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-1">
+  <div class="page-title mb-0">Підписки</div>
+  <a class="btn btn-primary" href="{{ url_for('subscription_new') }}">Додати підписку</a>
+</div>
+<div class="page-subtitle mb-3">
+  Спільні платні сервіси (Claude Code, VPS, Railway тощо). Прив'язка до конкретних
+  автоматизацій робиться на сторінці редагування кожної автоматизації — вартість тоді
+  ділиться порівну між усіма прив'язаними.
+</div>
+
+{% if subscriptions %}
+<div class="card mb-3">
+  <div class="card-body py-3 px-3">
+    <div class="text-muted f-12">Разом на місяць</div>
+    <div class="fw-bold f-22">${{ "%.2f"|format(total_monthly_usd) }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Назва</th>
+          <th>Провайдер</th>
+          <th>$/міс</th>
+          <th>Автоматизацій</th>
+          <th>Нотатки</th>
+          <th></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in subscriptions %}
+        <tr>
+          <td>{{ s.name }}</td>
+          <td>{{ s.provider or "—" }}</td>
+          <td>${{ "%.2f"|format(s.monthly_cost_usd) }}</td>
+          <td>{{ s.automations|length }}</td>
+          <td class="text-muted small">{{ s.notes or "" }}</td>
+          <td><a class="btn btn-sm btn-light-secondary" href="{{ url_for('subscription_edit', sub_id=s.id) }}">Редагувати</a></td>
+          <td>
+            <form method="post" action="{{ url_for('subscription_delete', sub_id=s.id) }}" class="mb-0"
+                  onsubmit="return confirm('Видалити «{{ s.name }}»?{% if s.automations %} Вона прив'язана до {{ s.automations|length }} автоматизацій.{% endif %}');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-light-danger">Видалити</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="text-center text-muted py-5">
+  <p class="mb-0">Поки жодної підписки не зареєстровано.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -36,6 +36,7 @@ from .models import (
     Role,
     Skill,
     Status,
+    Subscription,
     User,
     _now,
     hue_for,
@@ -668,7 +669,9 @@ def register_routes(app):
                 errors["slug"] = f"Автоматизація зі slug «{slug}» вже існує."
 
         for field, label in [("monthly_token_budget_usd", "Місячний бюджет"),
-                              ("token_spike_multiplier", "Множник сплеску")]:
+                              ("token_spike_multiplier", "Множник сплеску"),
+                              ("dev_hours", "Витрачено годин на розробку"),
+                              ("maintenance_hours_per_month", "Підтримка, годин/місяць")]:
             raw = form.get(field, "").strip()
             if raw:
                 try:
@@ -715,6 +718,8 @@ def register_routes(app):
         automation.departments = Department.query.filter(
             Department.id.in_(form.getlist("departments"))).all()
         automation.skills = Skill.query.filter(Skill.id.in_(form.getlist("skills"))).all()
+        automation.subscriptions = Subscription.query.filter(
+            Subscription.id.in_(form.getlist("subscriptions"))).all()
         if automation.roi is None:
             automation.roi = ROIEntry()
         automation.roi.hypothesis = form.get("hypothesis", "").strip()
@@ -725,6 +730,13 @@ def register_routes(app):
         # automation has actually run a while and someone re-checks the real number
         # (see ROIEntry.measured_hours_per_month's own comment in models.py).
         automation.roi.measured_hours_per_month = form.get("measured_hours_per_month", "").strip() or None
+        # Cost side (models.py's ROIEntry.dev_hours/maintenance_hours_per_month) -
+        # validate_automation_form already rejected a non-numeric value before this
+        # runs, so a plain float() here is safe, unlike the stage1 path's silent
+        # skip (that one accepts an untrusted plain <input> with no prior check).
+        for field in ("dev_hours", "maintenance_hours_per_month"):
+            raw = form.get(field, "").strip()
+            setattr(automation.roi, field, float(raw) if raw else None)
 
     def apply_stage1_time_metrics(automation):
         """Copies Phase 1's four number answers (src/stage1_questions.py) into
@@ -756,6 +768,7 @@ def register_routes(app):
         users = User.query.order_by(User.name).all()
         departments = Department.query.order_by(Department.name).all()
         skills = Skill.query.order_by(Skill.name).all()
+        subscriptions = Subscription.query.order_by(Subscription.name).all()
         if request.method == "POST":
             errors = validate_automation_form(request.form)
             if not errors:
@@ -773,11 +786,11 @@ def register_routes(app):
             return render_template("automation_form.html", departments=departments, skills=skills,
                                     users=users, statuses=Status, automation=None, form_data=request.form,
                                     errors=errors, default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
-                                    ai_usage_projects=ai_usage.list_projects())
+                                    ai_usage_projects=ai_usage.list_projects(), subscriptions=subscriptions)
         return render_template("automation_form.html", departments=departments, skills=skills,
                                 users=users, statuses=Status, automation=None,
                                 default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
-                                ai_usage_projects=ai_usage.list_projects())
+                                ai_usage_projects=ai_usage.list_projects(), subscriptions=subscriptions)
 
     @app.route("/automations/<slug>/edit", methods=["GET", "POST"])
     @login_required
@@ -788,6 +801,7 @@ def register_routes(app):
         users = User.query.order_by(User.name).all()
         departments = Department.query.order_by(Department.name).all()
         skills = Skill.query.order_by(Skill.name).all()
+        subscriptions = Subscription.query.order_by(Subscription.name).all()
         if request.method == "POST":
             errors = validate_automation_form(request.form, automation=automation)
             if not errors:
@@ -798,11 +812,11 @@ def register_routes(app):
             return render_template("automation_form.html", departments=departments, skills=skills,
                                     users=users, statuses=Status, automation=automation, form_data=request.form,
                                     errors=errors, default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
-                                    ai_usage_projects=ai_usage.list_projects())
+                                    ai_usage_projects=ai_usage.list_projects(), subscriptions=subscriptions)
         return render_template("automation_form.html", departments=departments, skills=skills,
                                 users=users, statuses=Status, automation=automation,
                                 default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
-                                ai_usage_projects=ai_usage.list_projects())
+                                ai_usage_projects=ai_usage.list_projects(), subscriptions=subscriptions)
 
     @app.route("/automations/<slug>/stage1", methods=["GET", "POST"])
     @login_required
@@ -1093,6 +1107,79 @@ def register_routes(app):
             db.session.delete(dept)
             db.session.commit()
         return redirect(url_for("departments_list"))
+
+    def validate_subscription_form(form):
+        errors = {}
+        if not form.get("name", "").strip():
+            errors["name"] = "Вкажи назву."
+        raw_cost = form.get("monthly_cost_usd", "").strip()
+        if not raw_cost:
+            errors["monthly_cost_usd"] = "Вкажи вартість на місяць."
+        else:
+            try:
+                if float(raw_cost) < 0:
+                    errors["monthly_cost_usd"] = "Вартість не може бути від'ємною."
+            except ValueError:
+                errors["monthly_cost_usd"] = "Введи число."
+        return errors
+
+    def apply_subscription_form(subscription, form):
+        subscription.name = form["name"].strip()
+        subscription.provider = form.get("provider", "").strip() or None
+        subscription.monthly_cost_usd = float(form["monthly_cost_usd"].strip())
+        subscription.notes = form.get("notes", "").strip() or None
+
+    @app.route("/subscriptions")
+    @login_required
+    @admin_required
+    def subscriptions_list():
+        subscriptions = Subscription.query.order_by(Subscription.name).all()
+        total_monthly_usd = sum((s.monthly_cost_usd for s in subscriptions), start=0)
+        return render_template("subscriptions.html", subscriptions=subscriptions, total_monthly_usd=total_monthly_usd)
+
+    @app.route("/subscriptions/new", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def subscription_new():
+        if request.method == "POST":
+            errors = validate_subscription_form(request.form)
+            if not errors:
+                subscription = Subscription()
+                apply_subscription_form(subscription, request.form)
+                db.session.add(subscription)
+                db.session.commit()
+                flash(f"Підписку «{subscription.name}» додано.", "success")
+                return redirect(url_for("subscriptions_list"))
+            flash("Форма містить помилки - перевір позначені поля.", "error")
+            return render_template("subscription_form.html", subscription=None, form_data=request.form, errors=errors)
+        return render_template("subscription_form.html", subscription=None)
+
+    @app.route("/subscriptions/<int:sub_id>/edit", methods=["GET", "POST"])
+    @login_required
+    @admin_required
+    def subscription_edit(sub_id):
+        subscription = Subscription.query.get_or_404(sub_id)
+        if request.method == "POST":
+            errors = validate_subscription_form(request.form)
+            if not errors:
+                apply_subscription_form(subscription, request.form)
+                db.session.commit()
+                flash(f"Підписку «{subscription.name}» оновлено.", "success")
+                return redirect(url_for("subscriptions_list"))
+            flash("Форма містить помилки - перевір позначені поля.", "error")
+            return render_template("subscription_form.html", subscription=subscription,
+                                    form_data=request.form, errors=errors)
+        return render_template("subscription_form.html", subscription=subscription)
+
+    @app.route("/subscriptions/<int:sub_id>/delete", methods=["POST"])
+    @login_required
+    @admin_required
+    def subscription_delete(sub_id):
+        subscription = Subscription.query.get_or_404(sub_id)
+        db.session.delete(subscription)
+        db.session.commit()
+        flash(f"Підписку «{subscription.name}» видалено.", "success")
+        return redirect(url_for("subscriptions_list"))
 
     @app.route("/automators/<int:user_id>")
     @login_required
@@ -1566,6 +1653,33 @@ def register_cli(app):
             db.session.execute(db.text(stmt))
         db.session.commit()
         click.echo(f"Migrated: added {len(statements)} column(s) to roi_entry.")
+
+    @app.cli.command("migrate-cost-metrics")
+    def migrate_cost_metrics():
+        """One-off schema migration for ROIEntry's dev_hours/maintenance_hours_per_month
+        columns and the new Subscription/automation_subscriptions tables (see
+        models.py). The Subscription tables are brand new rather than altered
+        columns on an existing table, so db.create_all() (same call `init-db`
+        makes) is enough for those - it only ever creates tables that don't exist
+        yet, never touches ones that do, so it's safe to call again here rather
+        than requiring a separate `flask init-db` re-run. Safe to run more than
+        once overall."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("roi_entry")}
+        new_cols = {
+            "dev_hours": "NUMERIC(10, 2)",
+            "maintenance_hours_per_month": "NUMERIC(10, 2)",
+        }
+        statements = [f"ALTER TABLE roi_entry ADD COLUMN {name} {sql_type}"
+                      for name, sql_type in new_cols.items() if name not in existing_cols]
+        for stmt in statements:
+            db.session.execute(db.text(stmt))
+        if statements:
+            db.session.commit()
+            click.echo(f"Migrated: added {len(statements)} column(s) to roi_entry.")
+        else:
+            click.echo("roi_entry already migrated - nothing to do.")
+        db.create_all()
+        click.echo("Ensured subscription/automation_subscriptions tables exist.")
 
     @app.cli.command("migrate-security-review")
     def migrate_security_review():

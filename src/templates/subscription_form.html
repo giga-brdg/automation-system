@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set active_nav = 'subscriptions' %}
+{% set errors = errors or {} %}
+{% block title %}{{ "Редагувати підписку" if subscription else "Нова підписка" }}{% endblock %}
+{% block content %}
+<div class="page-title mb-3">{{ "Редагувати: " + subscription.name if subscription else "Нова підписка" }}</div>
+<div class="card" style="max-width: 32rem;">
+  <div class="card-body">
+    <form method="post" novalidate>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3">
+        <label class="form-label">Назва <span class="text-danger">*</span></label>
+        <input type="text" name="name" class="form-control {{ 'is-invalid' if errors.name }}" required
+               placeholder="Claude Code — Team"
+               value="{{ form_data.name if form_data else (subscription.name if subscription else '') }}">
+        {% if errors.name %}<div class="invalid-feedback">{{ errors.name }}</div>{% endif %}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Провайдер</label>
+        <input type="text" name="provider" class="form-control" placeholder="Anthropic"
+               value="{{ form_data.provider if form_data else (subscription.provider if subscription and subscription.provider else '') }}">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Вартість на місяць, $ <span class="text-danger">*</span></label>
+        <input type="number" step="0.01" min="0" name="monthly_cost_usd" required
+               class="form-control {{ 'is-invalid' if errors.monthly_cost_usd }}"
+               value="{{ form_data.monthly_cost_usd if form_data else (subscription.monthly_cost_usd if subscription else '') }}">
+        {% if errors.monthly_cost_usd %}<div class="invalid-feedback">{{ errors.monthly_cost_usd }}</div>{% endif %}
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Нотатки</label>
+        <textarea name="notes" class="form-control" rows="2">{{ form_data.notes if form_data else (subscription.notes if subscription and subscription.notes else '') }}</textarea>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-lg">Зберегти</button>
+        <a class="btn btn-light-secondary btn-lg" href="{{ url_for('subscriptions_list') }}">Скасувати</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

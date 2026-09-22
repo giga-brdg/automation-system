@@ -138,6 +138,35 @@
         {% if errors.token_spike_multiplier %}<div class="invalid-feedback">{{ errors.token_spike_multiplier }}</div>{% endif %}
       </div>
 
+      <hr class="my-3">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h5 class="card-title mb-0">Підписки</h5>
+        {% if current_user.is_admin %}
+        <a class="small" href="{{ url_for('subscriptions_list') }}">Керувати підписками</a>
+        {% endif %}
+      </div>
+      {% if subscriptions %}
+      <div class="mb-0">
+        {% set selected_sub_ids = form_data.getlist('subscriptions')|map('int')|list if form_data else (automation.subscriptions|map(attribute='id')|list if automation else []) %}
+        <div class="d-flex flex-column gap-1">
+          {% for s in subscriptions %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="subscriptions" value="{{ s.id }}" id="sub-{{ s.id }}"
+                   {% if s.id in selected_sub_ids %}checked{% endif %}>
+            <label class="form-check-label" for="sub-{{ s.id }}">
+              {{ s.name }} <span class="text-muted small">(${{ "%.2f"|format(s.monthly_cost_usd) }}/міс{% if s.provider %}, {{ s.provider }}{% endif %})</span>
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <p class="text-muted small mb-0">
+        Поки жодної підписки не зареєстровано.
+        {% if current_user.is_admin %}<a href="{{ url_for('subscription_new') }}">Додати першу</a>.{% endif %}
+      </p>
+      {% endif %}
+
       <div class="card mt-3 mb-3">
         <h5 class="card-header mb-0">ROI (можна оцінку, без реальних цифр)</h5>
         <div class="card-body">
@@ -162,6 +191,22 @@
             <input type="number" step="0.1" name="measured_hours_per_month" class="form-control"
                    value="{{ form_data.measured_hours_per_month if form_data else (automation.roi.measured_hours_per_month if automation and automation.roi else '') }}">
             <div class="form-text">Заповнюй пізніше, коли автоматизація вже попрацювала й є реальна цифра — не оцінка зі Stage 1.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Витрачено годин на розробку (одноразово)</label>
+            <input type="number" step="0.1" min="0" name="dev_hours"
+                   class="form-control {{ 'is-invalid' if errors.dev_hours }}"
+                   value="{{ form_data.dev_hours if form_data else (automation.roi.dev_hours if automation and automation.roi and automation.roi.dev_hours is not none else '') }}">
+            {% if errors.dev_hours %}<div class="invalid-feedback">{{ errors.dev_hours }}</div>{% endif %}
+            <div class="form-text">Заповнюй, коли v1 вже готовий і реально відомо, скільки часу пішло.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Підтримка, годин/місяць</label>
+            <input type="number" step="0.1" min="0" name="maintenance_hours_per_month"
+                   class="form-control {{ 'is-invalid' if errors.maintenance_hours_per_month }}"
+                   value="{{ form_data.maintenance_hours_per_month if form_data else (automation.roi.maintenance_hours_per_month if automation and automation.roi and automation.roi.maintenance_hours_per_month is not none else '') }}">
+            {% if errors.maintenance_hours_per_month %}<div class="invalid-feedback">{{ errors.maintenance_hours_per_month }}</div>{% endif %}
+            <div class="form-text">Поточна оцінка — онови, коли реальне навантаження на підтримку зміниться.</div>
           </div>
           <div class="mb-0">
             <label class="form-label">Посилання на презентацію</label>

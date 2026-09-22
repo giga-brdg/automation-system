@@ -148,6 +148,40 @@ class Department(db.Model):
         return f"--dept-pill-bg: oklch(35% 0.09 {self.hue}); --dept-pill-fg: #fff;"
 
 
+automation_subscriptions = db.Table(
+    "automation_subscriptions",
+    db.Column("automation_id", db.Integer, db.ForeignKey("automation.id"), primary_key=True),
+    db.Column("subscription_id", db.Integer, db.ForeignKey("subscription.id"), primary_key=True),
+)
+
+
+class Subscription(db.Model):
+    """A shared recurring cost - a Claude Code seat, a VPS, Railway, a domain -
+    unlike ai_usage.py's token spend, there's no external billing API this can
+    pull from, so monthly_cost_usd is a plain number someone types in and keeps
+    current by hand. Deliberately its own entity rather than a field on
+    Automation: the same VPS or Claude Code seat is often shared by several
+    automations at once (see cost_per_automation below), the same reason
+    Department is its own table instead of a string column."""
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    provider = db.Column(db.String(255))
+    monthly_cost_usd = db.Column(db.Numeric(10, 2), nullable=False)
+    notes = db.Column(db.Text)
+
+    automations = db.relationship("Automation", secondary=automation_subscriptions, backref="subscriptions")
+
+    @property
+    def cost_per_automation(self):
+        """An explicit equal split across every linked automation, not a
+        guessed weight - visible and auditable, same honesty rule ROI's own
+        numbers already follow. None (not zero) when nothing is linked yet,
+        so a template can tell "unallocated" apart from "free"."""
+        if not self.automations:
+            return None
+        return self.monthly_cost_usd / len(self.automations)
+
+
 automation_skills = db.Table(
     "automation_skills",
     db.Column("automation_id", db.Integer, db.ForeignKey("automation.id"), primary_key=True),
@@ -271,6 +305,16 @@ class Automation(SecurityReviewMixin, db.Model):
         order_by="AutomationTodoItem.order_index",
     )
 
+    @property
+    def monthly_subscription_cost_usd(self):
+        """Sum of this automation's equal share of every Subscription it's
+        linked to (see Subscription.cost_per_automation) - None rather than 0
+        when it has no subscriptions linked, so a template can tell
+        "genuinely free" apart from "nobody's recorded this yet" the same way
+        ROIEntry's own None-vs-0 fields already do."""
+        shares = [s.cost_per_automation for s in self.subscriptions if s.cost_per_automation is not None]
+        return sum(shares) if shares else None
+
 
 class ROIEntry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -306,6 +350,18 @@ class ROIEntry(db.Model):
     # only a free-text claim in measured_value.
     measured_hours_per_month = db.Column(db.Numeric(10, 2))
 
+    # Cost side, same honesty rule as the benefit side above: real numbers or
+    # nothing, never a guess. dev_hours is one-time (building v1) - kept
+    # separate from maintenance_hours_per_month (ongoing, re-editable current
+    # figure, same "current value not a log" shape as measured_hours_per_month)
+    # on purpose, so a one-time cost never gets silently treated as recurring
+    # in net_hours_per_month below. Neither converts to money - there's no
+    # portfolio-wide hourly rate anywhere in this codebase, and inventing one
+    # would misrepresent every automation's real number, the same trap
+    # dashboard/ROI.md's own template already warns against.
+    dev_hours = db.Column(db.Numeric(10, 2))
+    maintenance_hours_per_month = db.Column(db.Numeric(10, 2))
+
     automation = db.relationship("Automation", back_populates="roi")
 
     @staticmethod
@@ -333,6 +389,26 @@ class ROIEntry(db.Model):
         if baseline is None or target is None:
             return None
         return baseline - target
+
+    @property
+    def best_hours_saved_per_month(self):
+        """measured_hours_per_month when a real post-launch number exists,
+        else the Phase 1 estimate - same Measured-beats-Estimated hierarchy
+        `confidence` already draws elsewhere on this model."""
+        if self.measured_hours_per_month is not None:
+            return self.measured_hours_per_month
+        return self.estimated_hours_saved_per_month
+
+    @property
+    def net_hours_per_month(self):
+        """best_hours_saved_per_month minus the ongoing maintenance cost, both
+        already hours/month - None unless both sides are known. Deliberately
+        excludes dev_hours: that's a one-time cost, not a monthly one, so
+        folding it into this figure would misrepresent it as recurring."""
+        saved = self.best_hours_saved_per_month
+        if saved is None or self.maintenance_hours_per_month is None:
+            return None
+        return saved - self.maintenance_hours_per_month
 
 
 class Comparison(db.Model):
