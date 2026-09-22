@@ -12,19 +12,25 @@ from src.extensions import db
 from src.models import Automation, PendingAutomation, Role, User
 
 
-def _make_user(email, name, role=Role.AUTOMATOR, is_approved=True):
-    user = User(email=email, name=name, role=role, is_confirmed=True, is_approved=is_approved)
+def _make_user(email, name, role=Role.AUTOMATOR, is_approved=True, github_username=None):
+    user = User(email=email, name=name, role=role, is_confirmed=True, is_approved=is_approved,
+                github_username=github_username)
     user.set_password("pw12345")
     db.session.add(user)
     db.session.commit()
     return user
 
 
-def _stub_org(monkeypatch, repos, summaries, pipelines=None):
+def _stub_org(monkeypatch, repos, summaries, pipelines=None, contributors=None):
     """`repos`: list of {"name", "private", "archived", "default_branch"}.
     `summaries`: {repo_name: text_or_None} - what dashboard/SUMMARY.md
     returns for each. `pipelines`: {repo_name: text_or_None} - what
-    PIPELINE.md returns, checked only for a repo with no SUMMARY.md."""
+    PIPELINE.md returns, checked only for a repo with no SUMMARY.md.
+    `contributors`: {repo_name: login_or_None} - the repo's top contributor,
+    which decides who a newly-found automation is handed to."""
+    contributors = contributors or {}
+    monkeypatch.setattr(github_sync, "fetch_top_contributor",
+                        lambda owner, repo: contributors.get(repo))
     monkeypatch.setattr(github_sync, "list_org_repos", lambda owner: repos)
     pipelines = pipelines or {}
 
@@ -74,6 +80,41 @@ class TestSyncGithubOrg:
             result = app.test_cli_runner().invoke(args=["sync-github-org", "giga-brdg"])
             assert "Automator" in result.output
             assert Automation.query.count() == 0
+
+    def test_new_automation_goes_to_the_matching_contributor(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("fallback@x.com", "Fallback")
+            _make_user("dev@x.com", "Dev", github_username="DevLogin")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "fallback@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nThing\n"},
+                      # GitHub logins are case-insensitive, and a hand-typed one
+                      # won't always match the casing the API hands back
+                      contributors={"thing": "devlogin"})
+            app.test_cli_runner().invoke(args=["sync-github-org", "giga-brdg"])
+            assert Automation.query.filter_by(slug="thing").first().owner.email == "dev@x.com"
+
+    def test_falls_back_when_the_contributor_has_no_account(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("fallback@x.com", "Fallback")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "fallback@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nThing\n"},
+                      contributors={"thing": "a-stranger"})
+            app.test_cli_runner().invoke(args=["sync-github-org", "giga-brdg"])
+            assert Automation.query.filter_by(slug="thing").first().owner.email == "fallback@x.com"
+
+    def test_a_viewer_contributor_does_not_become_an_owner(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("fallback@x.com", "Fallback")
+            _make_user("watcher@x.com", "Watcher", role=Role.VIEWER, github_username="watcher")
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "fallback@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nThing\n"},
+                      contributors={"thing": "watcher"})
+            app.test_cli_runner().invoke(args=["sync-github-org", "giga-brdg"])
+            # owning an automation carries manage rights a Viewer is meant to lack
+            assert Automation.query.filter_by(slug="thing").first().owner.email == "fallback@x.com"
 
     def test_imports_only_repos_with_summary_md(self, app, monkeypatch):
         with app.app_context():

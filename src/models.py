@@ -77,6 +77,13 @@ class User(UserMixin, db.Model):
     # only regenerated, same as CLICKUP_API_TOKEN's own security posture.
     api_key = db.Column(db.String(64), unique=True, nullable=False, default=lambda: secrets.token_hex(32))
     created_at = db.Column(db.DateTime, default=_now)
+    # GitHub login, so the org-wide scan can hand a newly-discovered repo to
+    # whoever actually writes it instead of parking every one of them on
+    # AUTOMATION_SYNC_OWNER_EMAIL. Matched against the repo's top contributor
+    # (src/github_sync.py's fetch_top_contributor). A login, not an email:
+    # GitHub hides commit emails behind noreply addresses by default, so the
+    # login is the only identifier reliably visible on someone else's repo.
+    github_username = db.Column(db.String(100))
     # Self-service registration gate (see /register, /confirm, src/telegram_bot.py).
     # is_confirmed: the person entered the code the admin relayed to them out
     # of band - proves they're a real person the admin let in, nothing more.

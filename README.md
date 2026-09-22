@@ -114,8 +114,11 @@ from a real repo. For registering many at once, `flask --app src.app sync-github
 <owner>` (e.g. `giga-brdg`) imports every repo under that GitHub org/user that has a
 `dashboard/SUMMARY.md`, skipping the rest (an SDK repo, this dashboard's own repo,
 anything archived) rather than guessing which ones count. An automation this command
-creates for the first time is assigned to `AUTOMATION_SYNC_OWNER_EMAIL`; one that
-already exists here keeps whoever already owns it. Runs daily on its own Railway cron
+creates for the first time goes to whoever's GitHub login (set by an admin on that
+person's profile page) matches the repo's top contributor, and to
+`AUTOMATION_SYNC_OWNER_EMAIL` when nobody matches; one that already exists here keeps
+whoever already owns it. The guess is only a starting point — an admin can hand an
+automation to someone else from its own page. Runs daily on its own Railway cron
 service, `github-org-sync-cron` (see `DEPLOYMENT.md`), same as `check-token-usage` —
 running it by hand works too.
 

@@ -378,6 +378,22 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
 _github_org_sync_lock = threading.Lock()
 
 
+def _contributor_owner(org, repo_name):
+    """The account whose github_username matches the repo's top contributor,
+    or None. Only an Automator/Admin qualifies - a Viewer matching by login
+    can't own an automation, and silently making them one would hand them
+    manage rights their role is meant to withhold."""
+    login = github_sync.fetch_top_contributor(org, repo_name)
+    if not login:
+        return None
+    # GitHub logins are case-insensitive; a hand-typed one won't always match
+    # the casing the API returns.
+    user = User.query.filter(db.func.lower(User.github_username) == login.lower()).first()
+    if user is None or not (user.is_admin or user.is_automator):
+        return None
+    return user
+
+
 def run_github_org_sync(app, owner):
     """Shared by the `sync-github-org` CLI command (Railway's daily cron) and
     the "Оновити з GitHub" button on /automations (an on-demand run of the
@@ -464,7 +480,8 @@ def run_github_org_sync(app, owner):
                 # this exact convention).
                 existing = (Automation.query.filter_by(repo_url=repo_url).first()
                             or Automation.query.filter_by(slug=slug).first())
-                owner_id = existing.owner_id if existing else default_owner.id
+                owner_id = (existing.owner_id if existing
+                            else (_contributor_owner(owner, repo["name"]) or default_owner).id)
                 sync_automation_from_github(existing, repo_url, owner_id, "", [], slug=slug,
                                              prefetched_summary_text=summary_text)
                 db.session.commit()
@@ -1110,7 +1127,27 @@ def register_routes(app):
     def automation_detail(slug):
         automation = Automation.query.filter_by(slug=slug).first_or_404()
         usage_summary = ai_usage.get_usage_summary(automation) if automation.ai_usage_project_id else None
-        return render_template("automation_detail.html", automation=automation, usage_summary=usage_summary)
+        candidate_owners = (User.query.filter(User.role.in_((Role.ADMIN, Role.AUTOMATOR)))
+                            .order_by(User.name).all()) if current_user.is_admin else []
+        return render_template("automation_detail.html", automation=automation, usage_summary=usage_summary,
+                                candidate_owners=candidate_owners)
+
+    @app.route("/automations/<slug>/transfer", methods=["POST"])
+    @login_required
+    @admin_required
+    def automation_transfer_owner(slug):
+        """Admin-only correction of who owns an automation. The org scan only
+        guesses an owner from the repo's top contributor, and the person who
+        writes a repo isn't always the one responsible for it afterwards."""
+        automation = Automation.query.filter_by(slug=slug).first_or_404()
+        new_owner = db.session.get(User, request.form.get("owner_id", type=int) or 0)
+        if new_owner is None or not (new_owner.is_admin or new_owner.is_automator):
+            flash("Власником може бути лише Automator або Admin.", "error")
+        else:
+            automation.owner_id = new_owner.id
+            db.session.commit()
+            flash(f"Власник «{automation.name}» — тепер {new_owner.name}.", "success")
+        return redirect(url_for("automation_detail", slug=slug))
 
     @app.route("/departments")
     @login_required
@@ -1243,6 +1280,23 @@ def register_routes(app):
     def automator_profile(user_id):
         automator = User.query.get_or_404(user_id)
         return render_template("automator_profile.html", automator=automator)
+
+    @app.route("/automators/<int:user_id>/github-username", methods=["POST"])
+    @login_required
+    @admin_required
+    def automator_set_github_username(user_id):
+        """Admin-only: the login the org scan matches a repo's top contributor
+        against, so a newly-discovered repo lands on whoever writes it."""
+        automator = User.query.get_or_404(user_id)
+        login = (request.form.get("github_username") or "").strip().lstrip("@")
+        if login and User.query.filter(db.func.lower(User.github_username) == login.lower(),
+                                        User.id != automator.id).first():
+            flash(f"GitHub-логін «{login}» уже закріплений за іншим користувачем.", "error")
+            return redirect(url_for("automator_profile", user_id=user_id))
+        automator.github_username = login or None
+        db.session.commit()
+        flash(f"GitHub-логін для «{automator.name}» {'оновлено' if login else 'очищено'}.", "success")
+        return redirect(url_for("automator_profile", user_id=user_id))
 
     @app.route("/automators/<int:user_id>/regenerate-api-key", methods=["POST"])
     @login_required
@@ -1776,6 +1830,21 @@ def register_cli(app):
             return
         PendingAutomation.__table__.create(db.engine, checkfirst=True)
         click.echo("Migrated: created pending_automation table.")
+
+    @app.cli.command("migrate-github-username")
+    def migrate_github_username():
+        """One-off schema migration for User.github_username (see models.py) -
+        the login the org scan matches a repo's top contributor against, so a
+        newly-found repo lands on whoever writes it instead of all of them
+        piling up on AUTOMATION_SYNC_OWNER_EMAIL. Safe to run more than
+        once."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("user")}
+        if "github_username" in existing_cols:
+            click.echo("Already migrated - nothing to do.")
+            return
+        db.session.execute(db.text('ALTER TABLE "user" ADD COLUMN github_username VARCHAR(100)'))
+        db.session.commit()
+        click.echo("Migrated: added github_username column to user.")
 
     @app.cli.command("sync-github-org")
     @click.argument("owner", required=False)

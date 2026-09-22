@@ -46,6 +46,26 @@
   </div>
 </div>
 
+{% if current_user.is_admin and (automator.is_admin or automator.is_automator) %}
+<div class="card mt-3">
+  <div class="card-body">
+    <h5 class="card-title">GitHub-логін</h5>
+    <p class="text-muted small mb-2">
+      За ним щоденний скан визначає, кому віддати щойно знайдений репозиторій: якщо логін збігається
+      з головним contributor'ом, автоматизація одразу записується на цю людину. Без логіна вона йде
+      на запасного власника з <code>AUTOMATION_SYNC_OWNER_EMAIL</code>.
+    </p>
+    <form method="post" action="{{ url_for('automator_set_github_username', user_id=automator.id) }}"
+          class="d-flex gap-2 flex-wrap" style="max-width:28rem;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="text" name="github_username" class="form-control" style="max-width:16rem;"
+             placeholder="напр. usyuk01" value="{{ automator.github_username or '' }}">
+      <button type="submit" class="btn btn-light-secondary">Зберегти</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if current_user.id == automator.id %}
 <div class="card mt-3">
   <div class="card-body">

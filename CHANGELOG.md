@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 ### Added
 - Initial scaffold.
+- Власник щойно знайденої автоматизації визначається за головним contributor'ом
+  репозиторію: адміністратор проставляє людині GitHub-логін на її сторінці, і
+  скан віддає репозиторій їй. `AUTOMATION_SYNC_OWNER_EMAIL` лишається запасним
+  варіантом. Потребує `flask migrate-github-username`.
+- Адміністратор може передати автоматизацію іншому власнику прямо з її сторінки.
 ### Changed
 ### Deprecated
 ### Removed

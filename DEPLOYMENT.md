@@ -72,7 +72,11 @@ command lives in Railway's project settings, not in git:
   `ROIEntry`), and `flask migrate-cost-metrics` (adds `roi_entry`'s `dev_hours`/
   `maintenance_hours_per_month` columns and creates the new `subscription`/
   `automation_subscriptions` tables via `db.create_all()`, see models.py's
-  `Subscription`) have **also not yet been run against production** as of this writing).
+  `Subscription`), and `flask migrate-github-username` (adds `user.github_username`,
+  the login the org scan matches a repo's top contributor against so a
+  newly-found repo lands on whoever writes it — until it runs, every
+  discovered automation falls back to `AUTOMATION_SYNC_OWNER_EMAIL`) have
+  **also not yet been run against production** as of this writing).
   A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without

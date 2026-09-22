@@ -200,6 +200,24 @@ def list_directory(owner, repo, path, branch):
     return [{"name": e["name"], "type": e["type"]} for e in data]
 
 
+def fetch_top_contributor(owner, repo):
+    """The login of whoever has the most commits on `repo`, or None. Used to
+    guess an owner for a newly-discovered automation; the guess is a starting
+    point an admin can override, not an authority, so any failure to answer
+    (empty repo, 404, 403 on a repo the token can't read) is None rather than
+    an exception that would abort the scan."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/contributors?per_page=1"
+    req = urllib.request.Request(url, headers=_github_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError:
+        return None
+    if not isinstance(data, list) or not data:
+        return None
+    return data[0].get("login") or None
+
+
 def parse_readme(text):
     """First '# Title' line as the name, first real paragraph after it as the
     one-liner - matches how stage-1-supplax's README.md template is shaped."""

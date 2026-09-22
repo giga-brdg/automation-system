@@ -20,12 +20,26 @@
     </div>
     <div class="text-muted mt-2" style="max-width: 640px;">{{ automation.one_liner or "" }}</div>
   </div>
-  <div class="d-flex align-items-center gap-2">
-    {{ ui.avatar(automation.owner.initials) }}
-    <div>
-      <div class="text-muted small">Власник</div>
-      <a class="fw-semibold" href="{{ url_for('automator_profile', user_id=automation.owner_id) }}">{{ automation.owner.name }}</a>
+  <div>
+    <div class="d-flex align-items-center gap-2">
+      {{ ui.avatar(automation.owner.initials) }}
+      <div>
+        <div class="text-muted small">Власник</div>
+        <a class="fw-semibold" href="{{ url_for('automator_profile', user_id=automation.owner_id) }}">{{ automation.owner.name }}</a>
+      </div>
     </div>
+    {% if candidate_owners %}
+    <form method="post" action="{{ url_for('automation_transfer_owner', slug=automation.slug) }}"
+          class="d-flex align-items-center gap-2 mt-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <select name="owner_id" class="form-select form-select-sm" style="max-width:13rem;">
+        {% for u in candidate_owners %}
+        <option value="{{ u.id }}" {% if u.id == automation.owner_id %}selected{% endif %}>{{ u.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-light-secondary btn-sm">Передати</button>
+    </form>
+    {% endif %}
   </div>
 </div>
 
