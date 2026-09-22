@@ -31,11 +31,46 @@
 
 <div class="row g-3">
   <div class="col-lg-8 d-flex flex-column gap-3">
+    <div class="d-flex flex-wrap gap-2">
+      {% if automation.repo_url %}
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ automation.repo_url }}">
+        <i class="ti ti-brand-github"></i> Репозиторій
+      </a>
+      {% endif %}
+      {% if automation.clickup_url %}
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ automation.clickup_url }}">
+        <i class="ti ti-list-check"></i> Задача в ClickUp
+      </a>
+      {% endif %}
+      {% if current_user.can_manage(automation) %}
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_edit', slug=automation.slug) }}">
+        <i class="ti ti-edit"></i> Редагувати
+      </a>
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_stage1', slug=automation.slug) }}">
+        <i class="ti ti-clipboard-check"></i>
+        {% if automation.stage1_answers %}Stage 1: {{ automation.stage1_answers|length }}/9 фаз{% else %}Заповнити Stage 1{% endif %}
+      </a>
+      {% endif %}
+      {% if not automation.repo_url and current_user.can_manage(automation) %}
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_import_github', slug=automation.slug, owner_id=automation.owner_id) }}">
+        <i class="ti ti-brand-github"></i> Синхронізувати з GitHub
+      </a>
+      {% endif %}
+      {% if automation.repo_url and current_user.can_manage(automation) %}
+      <form method="post" action="{{ url_for('automation_resync', slug=automation.slug) }}" class="mb-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-light-secondary d-inline-flex align-items-center gap-1">
+          <i class="ti ti-refresh"></i> Оновити з GitHub
+        </button>
+      </form>
+      {% endif %}
+    </div>
+
     {% if automation.description %}
     <div class="card">
       <div class="card-body">
         <h5 class="card-title">Що це робить</h5>
-        <p class="mb-0" style="white-space:pre-line;">{{ automation.description }}</p>
+        <p class="mb-0" style="white-space:pre-line;">{{ automation.description|reflow }}</p>
       </div>
     </div>
     {% endif %}
@@ -48,11 +83,11 @@
           {% for p in automation.pages %}
           <div>
             <div class="fw-semibold">{{ p.name }}</div>
-            <div class="text-muted small mt-1" style="white-space:pre-line;">{{ p.description }}</div>
+            <div class="text-muted mt-1" style="white-space:pre-line;">{{ p.description|reflow }}</div>
             {% if p.detail %}
             <details class="mt-1">
-              <summary class="text-primary small" style="cursor:pointer;">Детальніше</summary>
-              <div class="text-muted small mt-1" style="white-space:pre-line;">{{ p.detail }}</div>
+              <summary class="text-primary" style="cursor:pointer;">Детальніше</summary>
+              <div class="text-muted mt-1" style="white-space:pre-line;">{{ p.detail|reflow }}</div>
             </details>
             {% endif %}
           </div>
@@ -95,41 +130,6 @@
       </div>
     </div>
     {% endif %}
-
-    <div class="d-flex flex-wrap gap-2">
-      {% if automation.repo_url %}
-      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ automation.repo_url }}">
-        <i class="ti ti-brand-github"></i> Репозиторій
-      </a>
-      {% endif %}
-      {% if automation.clickup_url %}
-      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ automation.clickup_url }}">
-        <i class="ti ti-list-check"></i> Задача в ClickUp
-      </a>
-      {% endif %}
-      {% if current_user.can_manage(automation) %}
-      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_edit', slug=automation.slug) }}">
-        <i class="ti ti-edit"></i> Редагувати
-      </a>
-      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_stage1', slug=automation.slug) }}">
-        <i class="ti ti-clipboard-check"></i>
-        {% if automation.stage1_answers %}Stage 1: {{ automation.stage1_answers|length }}/9 фаз{% else %}Заповнити Stage 1{% endif %}
-      </a>
-      {% endif %}
-      {% if not automation.repo_url and current_user.can_manage(automation) %}
-      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_import_github', slug=automation.slug, owner_id=automation.owner_id) }}">
-        <i class="ti ti-brand-github"></i> Синхронізувати з GitHub
-      </a>
-      {% endif %}
-      {% if automation.repo_url and current_user.can_manage(automation) %}
-      <form method="post" action="{{ url_for('automation_resync', slug=automation.slug) }}" class="mb-0">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-light-secondary d-inline-flex align-items-center gap-1">
-          <i class="ti ti-refresh"></i> Оновити з GitHub
-        </button>
-      </form>
-      {% endif %}
-    </div>
 
     {% if automation.todo_items %}
     {% set pending_todos = automation.todo_items|rejectattr('done')|list %}
@@ -334,24 +334,6 @@
 
     <div class="card">
       <div class="card-body">
-        <h5 class="card-title">Статус</h5>
-        <div class="text-muted" style="line-height:1.5;">
-          Востаннє редаговано вручну: {{ automation.updated_at.strftime("%Y-%m-%d") }}.<br>
-          {% if automation.repo_url %}
-            {% if automation.last_synced_at %}
-              Синхронізовано з GitHub: {{ automation.last_synced_at.strftime("%Y-%m-%d %H:%M") }}.
-            {% else %}
-              Репозиторій вказано, але синхронізація ще жодного разу не запускалась.
-            {% endif %}
-          {% else %}
-            Не підключено до GitHub.
-          {% endif %}
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-body">
         <div class="d-flex align-items-center justify-content-between">
           <h5 class="card-title mb-0">Security review</h5>
           {% if automation.repo_url and current_user.can_manage(automation) %}
@@ -388,23 +370,6 @@
         </div>
       </div>
     </div>
-
-    {% if automation.current_stage_override or automation.last_commit_message %}
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Зараз</h5>
-        {% if automation.current_stage_override %}
-        <div>{{ automation.current_stage_override }}</div>
-        <div class="text-muted mt-1 f-12">Вказано вручну в dashboard/SUMMARY.md</div>
-        {% else %}
-        <div style="font-family: var(--bs-font-monospace);">{{ automation.last_commit_message }}</div>
-        <div class="text-muted mt-1 f-12">
-          Останній комміт{% if automation.last_commit_at %} · {{ automation.last_commit_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}
-        </div>
-        {% endif %}
-      </div>
-    </div>
-    {% endif %}
   </div>
 </div>
 {% endblock %}
