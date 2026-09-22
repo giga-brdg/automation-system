@@ -3,15 +3,16 @@
 ## Commit messages: Ukrainian subject line
 
 Write commit subject lines for this repo in Ukrainian, not the usual English
-convention. This automation *is* the portfolio dashboard — its own card shows
-`automation.last_commit_message`, the literal last commit subject pulled live
-from GitHub (`src/github_sync.py`'s `fetch_latest_commit`), directly in the
-"Зараз" panel of an otherwise all-Ukrainian UI (`src/templates/
-automation_detail.html`). Deliberately not translated or interpreted (see
-`src/models.py`'s comment on `last_commit_message` — a raw fact, not a guessed
-lifecycle stage), so an English subject there reads as broken language-mixing
-on the one automation whose entry represents itself.
+convention. The history here is already entirely Ukrainian, and this repo *is*
+the portfolio dashboard, whose UI is Ukrainian end to end — an English subject
+in `git log` reads as language-mixing inside the one product that is itself
+written in Ukrainian.
+
+The rule started out with a stronger reason: the dashboard's "Зараз" panel
+rendered each automation's last commit subject verbatim, so this repo's own
+card showed its own commit messages to users. That panel and the fields behind
+it are gone, and nothing displays a commit subject any more — the convention is
+kept now for a consistent log, not for a reader.
 
 This is specific to this repo, not a rule for automations registered *in* the
-portfolio — their repos keep normal English commit conventions; only this
-one's commits are what that panel displays about itself.
+portfolio — their repos keep normal English commit conventions.
