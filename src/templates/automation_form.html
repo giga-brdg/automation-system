@@ -157,6 +157,12 @@
               <option value="measured" {% if confidence == 'measured' %}selected{% endif %}>Виміряно</option>
             </select>
           </div>
+          <div class="mb-3">
+            <label class="form-label">Виміряно годин/місяць (якщо метрика — час)</label>
+            <input type="number" step="0.1" name="measured_hours_per_month" class="form-control"
+                   value="{{ form_data.measured_hours_per_month if form_data else (automation.roi.measured_hours_per_month if automation and automation.roi else '') }}">
+            <div class="form-text">Заповнюй пізніше, коли автоматизація вже попрацювала й є реальна цифра — не оцінка зі Stage 1.</div>
+          </div>
           <div class="mb-0">
             <label class="form-label">Посилання на презентацію</label>
             <input type="url" name="presentation_url" class="form-control"

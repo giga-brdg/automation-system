@@ -721,6 +721,33 @@ def register_routes(app):
         automation.roi.metric_description = form.get("metric_description", "").strip()
         automation.roi.confidence = form.get("confidence", "estimated")
         automation.roi.presentation_url = _safe_url(form.get("presentation_url", ""))
+        # The one manually-editable numeric ROI figure - filled in later, once the
+        # automation has actually run a while and someone re-checks the real number
+        # (see ROIEntry.measured_hours_per_month's own comment in models.py).
+        automation.roi.measured_hours_per_month = form.get("measured_hours_per_month", "").strip() or None
+
+    def apply_stage1_time_metrics(automation):
+        """Copies Phase 1's four number answers (src/stage1_questions.py) into
+        automation.roi's structured columns, right after Stage 1's form saves them
+        into stage1_answers - single source of truth, no separate manual re-entry
+        step. Silently skips a field that isn't a valid number rather than raising,
+        since these came from a plain <input type="number"> the browser already
+        constrains, not a trusted API payload."""
+        phase1 = (automation.stage1_answers or {}).get("1", {})
+        keys = ("baseline_cycle_minutes", "baseline_frequency_per_month",
+                "target_cycle_minutes", "target_frequency_per_month")
+        if not any(k in phase1 for k in keys):
+            return
+        if automation.roi is None:
+            automation.roi = ROIEntry()
+        for key in keys:
+            raw = phase1.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                setattr(automation.roi, key, float(raw))
+            except (TypeError, ValueError):
+                continue
 
     @app.route("/automations/new", methods=["GET", "POST"])
     @login_required
@@ -789,6 +816,7 @@ def register_routes(app):
             abort(403)
         if request.method == "POST":
             automation.stage1_answers = stage1_questions.collect_answers(request.form)
+            apply_stage1_time_metrics(automation)
             db.session.commit()
             n = stage1_questions.answered_phase_count(automation.stage1_answers)
             flash(f"Відповіді Stage 1 збережено ({n}/9 фаз).", "success")
@@ -1515,6 +1543,29 @@ def register_cli(app):
             click.echo("Migrated: renamed skill 'stage-0-supplax' to 'stage-1-supplax'.")
         else:
             click.echo("No skill row named 'stage-0-supplax' - nothing to do.")
+
+    @app.cli.command("migrate-roi-time-metrics")
+    def migrate_roi_time_metrics():
+        """One-off schema migration for ROIEntry's structured time-metric columns
+        (see models.py's ROIEntry, automation_stage1's apply_stage1_time_metrics,
+        apply_manual_form's measured_hours_per_month). Safe to run more than once."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("roi_entry")}
+        new_cols = {
+            "baseline_cycle_minutes": "NUMERIC(10, 2)",
+            "baseline_frequency_per_month": "NUMERIC(10, 2)",
+            "target_cycle_minutes": "NUMERIC(10, 2)",
+            "target_frequency_per_month": "NUMERIC(10, 2)",
+            "measured_hours_per_month": "NUMERIC(10, 2)",
+        }
+        statements = [f"ALTER TABLE roi_entry ADD COLUMN {name} {sql_type}"
+                      for name, sql_type in new_cols.items() if name not in existing_cols]
+        if not statements:
+            click.echo("Already migrated - nothing to do.")
+            return
+        for stmt in statements:
+            db.session.execute(db.text(stmt))
+        db.session.commit()
+        click.echo(f"Migrated: added {len(statements)} column(s) to roi_entry.")
 
     @app.cli.command("migrate-security-review")
     def migrate_security_review():

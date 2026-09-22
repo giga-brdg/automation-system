@@ -287,7 +287,52 @@ class ROIEntry(db.Model):
     # Artifacts are served from claude.ai and can't be iframed here.
     presentation_url = db.Column(db.String(500))
 
+    # Structured time metrics - filled from Stage 1's Phase 1 (src/stage1_questions.py),
+    # pre-filled there from AUTOMATION_REQUEST.md's own cycle x frequency arithmetic
+    # when a Stage 0 brief exists. Kept as the raw cycle/frequency inputs rather than
+    # just a final hours-per-month total, so the number stays auditable - see the
+    # *_hours_per_month properties below for the derived figures. Every other ROI
+    # metric type (conversion/quality/cost) stays free text in metric_description/
+    # measured_value above - only time shares a common unit across every automation,
+    # so only time is safe to sum across the whole portfolio.
+    baseline_cycle_minutes = db.Column(db.Numeric(10, 2))
+    baseline_frequency_per_month = db.Column(db.Numeric(10, 2))
+    target_cycle_minutes = db.Column(db.Numeric(10, 2))
+    target_frequency_per_month = db.Column(db.Numeric(10, 2))
+    # Filled in later, once the automation has actually run a while and someone
+    # re-checks the real number - deliberately separate from target_hours_per_month
+    # (the estimate made at intake time), the same "Estimated vs Measured" distinction
+    # `confidence` already draws, just with a real figure behind it now instead of
+    # only a free-text claim in measured_value.
+    measured_hours_per_month = db.Column(db.Numeric(10, 2))
+
     automation = db.relationship("Automation", back_populates="roi")
+
+    @staticmethod
+    def _hours_per_month(cycle_minutes, frequency_per_month):
+        if cycle_minutes is None or frequency_per_month is None:
+            return None
+        return cycle_minutes * frequency_per_month / 60
+
+    @property
+    def baseline_hours_per_month(self):
+        return self._hours_per_month(self.baseline_cycle_minutes, self.baseline_frequency_per_month)
+
+    @property
+    def target_hours_per_month(self):
+        # Frequency rarely changes just because a process got automated - fall back
+        # to the baseline frequency if the automator left target_frequency blank.
+        frequency = self.target_frequency_per_month
+        if frequency is None:
+            frequency = self.baseline_frequency_per_month
+        return self._hours_per_month(self.target_cycle_minutes, frequency)
+
+    @property
+    def estimated_hours_saved_per_month(self):
+        baseline, target = self.baseline_hours_per_month, self.target_hours_per_month
+        if baseline is None or target is None:
+            return None
+        return baseline - target
 
 
 class Comparison(db.Model):
