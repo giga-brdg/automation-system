@@ -52,6 +52,27 @@ class TestSyncGithubOrg:
             runner = app.test_cli_runner()
             result = runner.invoke(args=["sync-github-org", "giga-brdg"])
             assert "AUTOMATION_SYNC_OWNER_EMAIL" in result.output
+            assert "не задано" in result.output
+            assert Automation.query.count() == 0
+
+    def test_says_so_when_the_configured_owner_has_no_account(self, app, monkeypatch):
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "nobody@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nThing\n"})
+            result = app.test_cli_runner().invoke(args=["sync-github-org", "giga-brdg"])
+            # naming the address is the whole point - "не задано або не знайдено"
+            # left a typo'd variable and an unset one looking identical
+            assert "nobody@x.com" in result.output
+            assert Automation.query.count() == 0
+
+    def test_refuses_an_owner_who_is_only_a_viewer(self, app, monkeypatch):
+        with app.app_context():
+            _make_user("viewer@x.com", "Viewer", role=Role.VIEWER)
+        monkeypatch.setenv("AUTOMATION_SYNC_OWNER_EMAIL", "viewer@x.com")
+        with app.app_context():
+            _stub_org(monkeypatch, [_repo("thing")], {"thing": "## Name\nThing\n"})
+            result = app.test_cli_runner().invoke(args=["sync-github-org", "giga-brdg"])
+            assert "Automator" in result.output
             assert Automation.query.count() == 0
 
     def test_imports_only_repos_with_summary_md(self, app, monkeypatch):

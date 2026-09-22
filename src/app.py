@@ -393,10 +393,16 @@ def run_github_org_sync(app, owner):
         raise ValueError(f"Синхронізація «{owner}» вже виконується — зачекай, поки попередній запуск завершиться.")
     try:
         owner_email = os.environ.get("AUTOMATION_SYNC_OWNER_EMAIL")
-        default_owner = User.query.filter_by(email=owner_email).first() if owner_email else None
+        if not owner_email:
+            raise ValueError("AUTOMATION_SYNC_OWNER_EMAIL не задано — вкажи пошту існуючого "
+                              "Automator/Admin, на якого записувати щойно знайдені автоматизації.")
+        default_owner = User.query.filter_by(email=owner_email).first()
         if default_owner is None:
-            raise ValueError("AUTOMATION_SYNC_OWNER_EMAIL не задано або не знайдено такого користувача — "
-                              "потрібен існуючий Automator/Admin для щойно знайдених автоматизацій.")
+            raise ValueError(f"AUTOMATION_SYNC_OWNER_EMAIL вказує на «{owner_email}», але користувача "
+                              "з такою поштою тут немає — заведи його або виправ змінну.")
+        if not (default_owner.is_admin or default_owner.is_automator):
+            raise ValueError(f"«{owner_email}» має роль «{default_owner.role.label}» — щойно знайдені "
+                              "автоматизації нема на кого записати, потрібен Automator або Admin.")
 
         repos = github_sync.list_org_repos(owner)
 
