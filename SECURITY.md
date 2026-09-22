@@ -27,18 +27,30 @@ Covers this repo's app, as five separate surfaces:
   `raw.githubusercontent.com` by `github_sync.REPO_URL_RE`) using `GITHUB_TOKEN`
   — see the Known Limitations entry below for that token and the untrusted-input
   angle;
-- the security-scan trigger (`src/github_sync.py`'s `dispatch_security_scan`,
-  invoked by `POST /automations/<slug>/trigger-security-scan` in `src/app.py`).
-  Gated the same way as resync above (`@login_required` plus
-  `current_user.can_manage(automation)`), but its risk is the opposite
-  direction from GitHub-sync's: instead of reading files from an
+- the security-scan trigger, in two forms sharing one helper
+  (`_run_security_scan_dispatch` in `src/app.py`, calling
+  `src/github_sync.py`'s `dispatch_security_scan`): the session-authenticated
+  `POST /automations/<slug>/trigger-security-scan` (`@login_required` plus
+  `current_user.can_manage(automation)`), and its machine-facing twin `POST
+  /api/security-scan/trigger` — a fourth auth surface alongside the
+  API-key-sync endpoints above, keyed off the same per-user `api_key` but
+  taking a `repo` ("owner/name") in its JSON body instead of a slug, looking
+  up the matching `Automation` by `repo_url`, and applying the same
+  `can_manage` check so a valid key alone can't queue a scan for an
+  automation the caller doesn't own or admin. Either route's risk is the
+  opposite direction from GitHub-sync's: instead of reading files from an
   admin/automator-supplied repo, it makes an authenticated **write** call —
   a `workflow_dispatch` — into a specific, hardcoded repo
   (`giga-brdg/github-security-scan`, not admin-suppliable) using a separate
   token, `SECURITY_SCAN_TRIGGER_TOKEN`. That token is intentionally scoped to
   Actions: write on that one repo alone (see the Known Limitations entry
   below), so this endpoint can queue a scan run there but can't read or write
-  anything else in that repo or any other.
+  anything else in that repo or any other. The API route exists so a CLI/skill
+  (`security-alert-fix`) can queue a rescan of an automator's own repo without
+  that automator needing personal GitHub access to `giga-brdg/github-security-scan`
+  at all — unlike an accept-list edit in that repo's `config/accepted_findings.json`,
+  queuing a rescan can't suppress a finding, only surface one sooner, so this
+  endpoint deliberately doesn't require the stronger access that action still does.
 
 ClickUp is **not** in scope because there is no ClickUp integration to cover:
 `clickup_url` (`src/models.py`) is a plain link a user types into a form, and
@@ -144,7 +156,11 @@ checked directly against the deployed app after the migration ran.
   `github_sync.py`) are hardcoded, not admin-suppliable, so this endpoint
   can't be pointed at an arbitrary repo the way GitHub-sync's `repo_url` can —
   the only per-call input is which of *this* dashboard's own automations to
-  scan.
+  scan. The API route (`/api/security-scan/trigger`) resolves its `repo`
+  input to an `Automation` by an exact `repo_url` string match before doing
+  anything else, same as the existing GitHub-org sync dedup logic
+  (`src/app.py` line ~440) — it can't dispatch a scan for a repo that isn't
+  already registered here, regardless of what string is sent.
 - **Authorization model / IDOR — Fixed.** Three roles (`Role.ADMIN`/
   `AUTOMATOR`/`VIEWER`, `src/models.py`) gated by `admin_required`/
   `automator_required`/`User.can_manage` (`src/app.py`) describe who can do

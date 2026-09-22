@@ -907,6 +907,31 @@ def register_routes(app):
         flash("Security review оновлено з GitHub.", "success")
         return redirect(url_for("automation_detail", slug=automation.slug))
 
+    def _run_security_scan_dispatch(automation):
+        """Shared by the browser route and the api_key-authenticated API
+        route below - validates config/repo_url and calls
+        github_sync.dispatch_security_scan. Returns (ok, error_message);
+        error_message is None on success. Kept as one function so the two
+        callers can't drift on what counts as "configured" or "a GitHub
+        repo" for this action."""
+        trigger_token = os.environ.get("SECURITY_SCAN_TRIGGER_TOKEN")
+        if not trigger_token:
+            return False, "SECURITY_SCAN_TRIGGER_TOKEN не налаштовано — запуск сканування недоступний."
+        repo_url = automation.repo_url
+        if not repo_url:
+            return False, "У цієї автоматизації не вказано посилання на репозиторій."
+        parsed = github_sync.parse_repo_url(repo_url)
+        if not parsed:
+            return False, "Не схоже на посилання на GitHub-репозиторій."
+        owner_gh, repo = parsed
+        try:
+            github_sync.dispatch_security_scan(owner_gh, repo, trigger_token)
+        except Exception:
+            app.logger.exception("Security scan dispatch failed for %s", repo_url)
+            return False, ("Не вдалося запустити сканування — перевір SECURITY_SCAN_TRIGGER_TOKEN і доступ до "
+                            "github-security-scan.")
+        return True, None
+
     @app.route("/automations/<slug>/trigger-security-scan", methods=["POST"])
     @login_required
     def automation_trigger_security_scan(slug):
@@ -920,29 +945,52 @@ def register_routes(app):
         automation = Automation.query.filter_by(slug=slug).first_or_404()
         if not current_user.can_manage(automation):
             abort(403)
-        trigger_token = os.environ.get("SECURITY_SCAN_TRIGGER_TOKEN")
-        if not trigger_token:
-            flash("SECURITY_SCAN_TRIGGER_TOKEN не налаштовано — запуск сканування недоступний.", "error")
-            return redirect(url_for("automation_detail", slug=slug))
-        repo_url = automation.repo_url
-        if not repo_url:
-            flash("У цієї автоматизації не вказано посилання на репозиторій.", "error")
-            return redirect(url_for("automation_detail", slug=slug))
-        parsed = github_sync.parse_repo_url(repo_url)
-        if not parsed:
-            flash("Не схоже на посилання на GitHub-репозиторій.", "error")
-            return redirect(url_for("automation_detail", slug=slug))
-        owner_gh, repo = parsed
-        try:
-            github_sync.dispatch_security_scan(owner_gh, repo, trigger_token)
-        except Exception:
-            app.logger.exception("Security scan dispatch failed for %s", repo_url)
-            flash("Не вдалося запустити сканування — перевір SECURITY_SCAN_TRIGGER_TOKEN і доступ до "
-                  "github-security-scan.", "error")
-            return redirect(url_for("automation_detail", slug=slug))
-
-        flash("Перевірку запущено, онови сторінку за кілька хвилин і натисни «Оновити».", "success")
+        ok, message = _run_security_scan_dispatch(automation)
+        if ok:
+            flash("Перевірку запущено, онови сторінку за кілька хвилин і натисни «Оновити».", "success")
+        else:
+            flash(message, "error")
         return redirect(url_for("automation_detail", slug=slug))
+
+    @app.route("/api/security-scan/trigger", methods=["POST"])
+    @csrf.exempt  # machine-facing, X-API-Key auth - no Flask session to carry a CSRF token
+    def api_trigger_security_scan():
+        """Machine-facing twin of automation_trigger_security_scan, for a
+        CLI/skill (security-alert-fix) to queue a rescan of one repo using
+        this app's own narrowly-scoped SECURITY_SCAN_TRIGGER_TOKEN - the
+        calling automator never needs personal GitHub access to
+        giga-brdg/github-security-scan just for this action. Takes a 'repo'
+        ("owner/name") in the JSON body rather than a slug: a CLI running
+        inside that repo knows its own owner/name (git remote), not
+        necessarily this app's slug for it. Same authorization shape as
+        api_sync_automation above - X-API-Key resolves to an approved
+        Admin/Automator - plus can_manage on whichever automation is
+        registered for that repo, since owning an API key alone shouldn't
+        let someone queue scans for an automation they don't manage."""
+        api_key = request.headers.get("X-API-Key")
+        caller = User.query.filter_by(api_key=api_key).first() if api_key else None
+        if not caller:
+            return jsonify({"error": "invalid or missing X-API-Key"}), 401
+        if caller.role not in (Role.ADMIN, Role.AUTOMATOR) or not caller.is_approved:
+            return jsonify({"error": "this account isn't allowed to trigger scans"}), 403
+
+        payload = request.get_json(silent=True) or {}
+        repo = (payload.get("repo") or "").strip()
+        if "/" not in repo:
+            return jsonify({"error": "'repo' is required, as \"owner/name\""}), 400
+        owner_gh, repo_name = repo.split("/", 1)
+        repo_url = f"https://github.com/{owner_gh}/{repo_name}"
+
+        automation = Automation.query.filter_by(repo_url=repo_url).first()
+        if automation is None:
+            return jsonify({"error": f"no automation registered for {repo}"}), 404
+        if not caller.can_manage(automation):
+            return jsonify({"error": "you don't manage this automation"}), 403
+
+        ok, message = _run_security_scan_dispatch(automation)
+        if not ok:
+            return jsonify({"error": message}), 502
+        return jsonify({"ok": True}), 200
 
     @app.route("/automations/pending/<int:pending_id>/dismiss", methods=["POST"])
     @login_required

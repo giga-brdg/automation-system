@@ -161,8 +161,17 @@ badge variant name that templates combine with that stylesheet's classes).
   still how this app picks up the result once the scan finishes and commits it.
   Needs `SECURITY_SCAN_TRIGGER_TOKEN` in `.env` (Actions: write, scoped to that one
   repo — deliberately separate from `GITHUB_TOKEN`'s broader read access above); the
-  button flashes an error instead of doing nothing when it's unset. See
-  `SECURITY.md`'s Scope/Known Limitations for this token's risk profile.
+  button flashes an error instead of doing nothing when it's unset. A
+  machine-facing twin, `POST /api/security-scan/trigger` (X-API-Key auth,
+  `{"repo": "owner/name"}` body, resolved to an `Automation` by exact
+  `repo_url` match), shares the same dispatch call so a CLI/skill
+  (`security-alert-fix`, in `~/.claude/skills`) can queue a rescan without
+  the calling automator needing personal GitHub access to
+  `giga-brdg/github-security-scan` — deliberately not extended to the
+  accept-list edit that repo's `config/accepted_findings.json` also
+  supports, since that action can suppress a finding rather than just
+  surface one sooner. See `SECURITY.md`'s Scope/Known Limitations for this
+  token's risk profile.
 - **ClickUp** — not an active integration. `clickup_url` is a plain field set manually
   or via the sync payload above; there is no ClickUp fetch/parse code anywhere in `src/`.
 - **Telegram bot** (`src/telegram_bot.py`) — live today and load-bearing for the
