@@ -111,9 +111,9 @@
       <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_edit', slug=automation.slug) }}">
         <i class="ti ti-edit"></i> Редагувати
       </a>
-      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_stage0', slug=automation.slug) }}">
+      <a class="btn btn-light-secondary d-inline-flex align-items-center gap-1" href="{{ url_for('automation_stage1', slug=automation.slug) }}">
         <i class="ti ti-clipboard-check"></i>
-        {% if automation.stage0_answers %}Stage 0: {{ automation.stage0_answers|length }}/9 фаз{% else %}Заповнити Stage 0{% endif %}
+        {% if automation.stage1_answers %}Stage 1: {{ automation.stage1_answers|length }}/9 фаз{% else %}Заповнити Stage 1{% endif %}
       </a>
       {% endif %}
       {% if not automation.repo_url and current_user.can_manage(automation) %}

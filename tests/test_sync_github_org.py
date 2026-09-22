@@ -167,7 +167,7 @@ class TestPendingAutomations:
 
     def test_repo_with_neither_file_is_still_tracked_as_pending(self, app, monkeypatch):
         """Regression test: a repo can be a real, hand-rolled automation
-        (never bootstrapped via stage-0-supplax) - requiring PIPELINE.md as
+        (never bootstrapped via stage-1-supplax) - requiring PIPELINE.md as
         proof missed exactly this case in production (a real B2C product
         repo with no stage-0 history), so absence of PIPELINE.md must not
         silently drop the repo, only change the `missing` wording."""

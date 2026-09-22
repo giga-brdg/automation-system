@@ -1,5 +1,5 @@
 """Pull-based sync: given a GitHub repo URL, fetch README.md/dashboard/ROI.md/
-dashboard/SUMMARY.md (the files stage-0-supplax actually generates with a
+dashboard/SUMMARY.md (the files stage-1-supplax actually generates with a
 known structure) and parse them into the fields automation_new/
 api_sync_automation already know how to fill. dashboard/ROI.md and
 dashboard/SUMMARY.md are a generated sync contract, not the automation's real
@@ -119,7 +119,7 @@ def default_branch(owner, repo):
 
 def fetch_raw_file(owner, repo, path, branch):
     """Returns the file's text content, or None if it doesn't exist (a repo
-    bootstrapped by an older stage-0-supplax run, or one that isn't an
+    bootstrapped by an older stage-1-supplax run, or one that isn't an
     automation, may not have dashboard/ROI.md - that's a real case, not an
     error)."""
     url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
@@ -226,7 +226,7 @@ def fetch_latest_commit(owner, repo, branch):
 
 def parse_readme(text):
     """First '# Title' line as the name, first real paragraph after it as the
-    one-liner - matches how stage-0-supplax's README.md template is shaped."""
+    one-liner - matches how stage-1-supplax's README.md template is shaped."""
     if not text:
         return None, None
     title = None
@@ -373,7 +373,7 @@ _BACKLOG_FIELD_RE = re.compile(r"^(Scope|Found|Changed|Rejected):\s*(.*)$")
 
 def parse_backlog_md(text, limit=5):
     """Parses backlog/BACKLOG.md entries - each '## ...' heading is one
-    round's entry (see stage-0-supplax's references/backlog-format.md), body
+    round's entry (see stage-1-supplax's references/backlog-format.md), body
     holds Scope/Found/Changed/Rejected lines. Deliberately doesn't assume a
     fixed grammar for the heading text itself ("Round N of M — mode" in the
     spec, but real output has varied) - whatever's after '## ' is the label
@@ -409,7 +409,7 @@ _TODO_ITEM_START_RE = re.compile(r"^\s*-\s*\[([ xX])\]\s+(.+?)\s*$")
 
 def parse_todo_md(text):
     """Parses TODO.md's plain '- [ ]'/'- [x]' checklist lines - the file
-    stage-0-supplax already creates per project (empty at bootstrap, filled
+    stage-1-supplax already creates per project (empty at bootstrap, filled
     from real work as it happens). No fixed sections here, unlike
     dashboard/ROI.md and dashboard/SUMMARY.md - it's just a flat list, in
     file order. An item's own text can wrap onto indented continuation lines
@@ -432,7 +432,7 @@ def parse_todo_md(text):
 def roi_fields_from_sections(sections):
     """Maps dashboard/ROI.md's section names to ROIEntry's columns. Confidence is read
     from the template's own "Estimated" / "Measured (as of ...)" convention -
-    see stage-0-supplax's templates/dashboard/ROI.md."""
+    see stage-1-supplax's templates/dashboard/ROI.md."""
     confidence_text = sections.get("Confidence", "")
     confidence = "measured" if confidence_text.lower().startswith("measured") else "estimated"
     measured_value = None

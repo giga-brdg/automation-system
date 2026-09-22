@@ -6,14 +6,14 @@ Covers this repo's app, as four separate surfaces:
 - the Telegram admin-approval bot (`src/telegram_bot.py`);
 - the API-key-authenticated automation-sync endpoints (`POST
   /api/automations/<slug>/sync`, `src/app.py` lines ~867-889, and its read-only
-  counterpart `GET /api/automations/<slug>/stage0-answers`, lines ~962-989) — a
+  counterpart `GET /api/automations/<slug>/stage1-answers`, lines ~962-989) — a
   third, machine-facing auth surface, separate from the session-cookie login
   above, keyed off the per-user `api_key` column in `src/models.py`. The GET
   endpoint reuses the exact same auth chain as the POST one (key → owner
   lookup → role + `is_approved` → ownership-or-admin check) rather than
-  introducing a second one — it exists so `stage-0-supplax`'s bootstrap step
-  can pull whatever Stage 0 interview answers (`Automation.stage0_answers`,
-  filled at `/automations/<slug>/stage0`) were already entered in the
+  introducing a second one — it exists so `stage-1-supplax`'s bootstrap step
+  can pull whatever Stage 1 interview answers (`Automation.stage1_answers`,
+  filled at `/automations/<slug>/stage1`) were already entered in the
   dashboard, instead of asking about them again live;
 - the GitHub-sync integration (`src/github_sync.py`, invoked by
   `/automations/import-github` and `/automations/<slug>/resync` in

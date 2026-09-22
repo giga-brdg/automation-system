@@ -1,9 +1,9 @@
-"""The dashboard's own copy of stage-0-supplax's 9-phase interview
-(~/.claude/skills/stage-0-supplax/references/pipeline-phases.md) - lets an
+"""The dashboard's own copy of stage-1-supplax's 9-phase interview
+(~/.claude/skills/stage-1-supplax/references/pipeline-phases.md) - lets an
 automator answer it once, at registration time, in the dashboard UI instead
 of live in a Claude Code session. Phase numbers and question keys are chosen
 to match that reference file 1:1, so the skill's own step 0 can pull this via
-`GET /api/automations/<slug>/stage0-answers` and skip whatever key it finds
+`GET /api/automations/<slug>/stage1-answers` and skip whatever key it finds
 already filled, without a separate mapping table to keep in sync by hand.
 """
 
@@ -30,8 +30,21 @@ PHASES = [
                 ("other", "Інше"),
             ]},
             {"key": "v1_done", "label": "Як виглядає «готово» для v1?", "type": "textarea"},
-            {"key": "value_measurement",
-             "label": "Яку цінність це створює і як зрозуміти, що спрацювало? "
+            {"key": "target_metric_type", "label": "Яка головна метрика цієї автоматизації?",
+             "type": "select", "options": [
+                ("time_saved", "Час ручної праці"),
+                ("conversion", "Конверсія / пропускна здатність"),
+                ("quality", "Якість або точність"),
+                ("cost", "Витрати"),
+                ("other", "Інше"),
+            ]},
+            {"key": "manual_reduction_target",
+             "label": "Наскільки хочемо скоротити ручну дію чи покращити цю метрику? "
+                       "(конкретне число — %, год/тиждень, в.п. конверсії тощо; якщо є "
+                       "AUTOMATION_REQUEST.md з цифрами поточного процесу — відштовхуйся від них)",
+             "type": "textarea"},
+            {"key": "success_check",
+             "label": "Як зрозуміємо, що спрацювало — яке значення звіримо і коли? "
                        "(можна лишити порожнім — оцінимо самі)",
              "type": "textarea"},
         ],
@@ -230,7 +243,7 @@ PHASES = [
 
 def collect_answers(form):
     """Build the {"1": {...}, "2": {...}} dict this feature stores from a
-    submitted stage0_form.html POST - only non-empty answers, so the JSON
+    submitted stage1_form.html POST - only non-empty answers, so the JSON
     stays a lean set of *known* facts rather than a full grid of blanks."""
     answers = {}
     for phase in PHASES:

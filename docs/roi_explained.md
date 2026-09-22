@@ -128,7 +128,7 @@ GitHub sync *can* and does reset a previously "measured" card back to
 "estimated" — the one ROI column this additive-only guarantee does not cover.
 
 There's a second, separate write path with different behavior: `/api/automations/
-<slug>/sync`, the API-key-authenticated route stage-0-supplax's portfolio-sync step
+<slug>/sync`, the API-key-authenticated route stage-1-supplax's portfolio-sync step
 calls after a build finishes. Its `roi` block uses `roi.get(key,
 automation.roi.key)` — a missing-*key* fallback, not falsy-or — so a caller that
 sends an explicit empty string for `hypothesis`, `metric_description`,
@@ -182,7 +182,7 @@ not attach a number to it. The number itself can currently arrive via GitHub syn
 (`github_sync.py`'s `roi_fields_from_sections`, reached through the browser's
 `/automations/<slug>/resync` "Оновити з GitHub" button or the initial
 `/automations/import-github` import), the API-key-authenticated
-`/api/automations/<slug>/sync` route that stage-0-supplax's portfolio-sync step
+`/api/automations/<slug>/sync` route that stage-1-supplax's portfolio-sync step
 calls (see "What else is on the card" above — its overwrite semantics differ from
 GitHub sync's additive-only ones), or the `seed-demo` CLI. Nothing enforces the
 badge/number pairing either way, though: `github_sync.py` flips confidence to "measured" purely by checking

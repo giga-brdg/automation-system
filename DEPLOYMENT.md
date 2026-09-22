@@ -63,7 +63,10 @@ command lives in Railway's project settings, not in git:
   columns added since — the
   `/confirm` one, for its brute-force lockout, has **not yet been run against
   the production database** as of this writing, see `SECURITY.md`'s Known
-  Limitations for what breaks until it is). A from-scratch or restored DB also has no login path until someone
+  Limitations for what breaks until it is. `flask migrate-rename-stage0-to-stage1`
+  (renames `automation.stage0_answers` to `stage1_answers` and the `stage-0-supplax`
+  skill row to `stage-1-supplax`, now that the skill itself is Stage 1) has **also
+  not yet been run against production** as of this writing). A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without
   this step `init-db`/`migrate-registration` alone leave nobody able to log in

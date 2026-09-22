@@ -94,7 +94,7 @@ class TestAutomationFormValidation:
             assert automation.clickup_url is None
             assert automation.roi.presentation_url is None
 
-    def test_valid_submission_still_creates_and_redirects_to_stage0(self, app, client):
+    def test_valid_submission_still_creates_and_redirects_to_stage1(self, app, client):
         with app.app_context():
             _make_user("owner@x.com", "Owner")
         _login(client, "owner@x.com")
@@ -103,6 +103,6 @@ class TestAutomationFormValidation:
             "csrf_token": token, "slug": "good-one", "name": "Good One", "status": "idea",
         })
         assert resp.status_code == 302
-        assert "/stage0" in resp.headers["Location"]
+        assert "/stage1" in resp.headers["Location"]
         with app.app_context():
             assert Automation.query.filter_by(slug="good-one").first() is not None

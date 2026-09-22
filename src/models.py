@@ -239,15 +239,15 @@ class Automation(SecurityReviewMixin, db.Model):
     # re-alert every cron run. One of "budget_80"/"budget_100"/"spike"/null.
     last_token_alert_kind = db.Column(db.String(20))
     last_token_alert_at = db.Column(db.DateTime)
-    # Answers to stage-0-supplax's 9-phase interview (src/stage0_questions.py),
+    # Answers to stage-1-supplax's 9-phase interview (src/stage1_questions.py),
     # filled in the dashboard at registration time instead of live in a Claude
     # Code session - {"1": {"one_liner": "...", ...}, "2": {...}, ...}, phase
     # numbers/question keys matching that skill's own reference file 1:1. Read
-    # by GET /api/automations/<slug>/stage0-answers so a bootstrap run can
+    # by GET /api/automations/<slug>/stage1-answers so a bootstrap run can
     # treat these as already-known and only ask about what's actually missing.
     # Null/empty means nobody has filled this in yet - not the same as "every
     # answer was blank".
-    stage0_answers = db.Column(db.JSON)
+    stage1_answers = db.Column(db.JSON)
 
     owner = db.relationship("User", back_populates="automations")
     departments = db.relationship("Department", secondary=automation_departments, backref="automations")
@@ -323,7 +323,7 @@ class Connection(db.Model):
 
 
 class ReviewLogEntry(db.Model):
-    """Mirrors stage-0-supplax's backlog/BACKLOG.md entries, in the DB -
+    """Mirrors stage-1-supplax's backlog/BACKLOG.md entries, in the DB -
     parsed straight from that file by github_sync, not hand-entered."""
     id = db.Column(db.Integer, primary_key=True)
     automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False)
@@ -356,7 +356,7 @@ class AutomationTodoItem(db.Model):
 
 class AutomationPage(db.Model):
     """One entry per screen/page of the automation, from dashboard/SUMMARY.md's
-    '## Pages' section - see stage-0-supplax's templates/dashboard/SUMMARY.md.
+    '## Pages' section - see stage-1-supplax's templates/dashboard/SUMMARY.md.
     Plain-language only: this is what a non-technical viewer reads to
     understand what they'd actually click on and why."""
     id = db.Column(db.Integer, primary_key=True)
@@ -400,7 +400,7 @@ class PendingAutomation(db.Model):
     NOT an Automation row: it has no owner, no ROI, nothing a real
     automation needs - just "this exists, here's what's missing," so the
     gap is visible instead of the repo just silently not showing up.
-    `missing` also notes whether stage-0-supplax's PIPELINE.md is present
+    `missing` also notes whether stage-1-supplax's PIPELINE.md is present
     (bootstrapped, never finished reaching the dashboard) or not (nobody's
     confirmed this is even meant to be an automation) - but every
     non-archived repo without dashboard/SUMMARY.md gets a row either way,

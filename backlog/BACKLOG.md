@@ -2,7 +2,7 @@
 
 A running log of every review round this project has gone through — what each round
 found, what it changed, and what it deliberately left alone. Appended to, never
-regenerated or trimmed. Format and who writes each entry: see stage-0-supplax's
+regenerated or trimmed. Format and who writes each entry: see stage-1-supplax's
 `references/backlog-format.md`.
 
 ## Round 1 of up to 4 — standard

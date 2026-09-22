@@ -120,23 +120,23 @@ service, `github-org-sync-cron` (see `DEPLOYMENT.md`), same as `check-token-usag
 running it by hand works too.
 
 Registering a brand-new automation by hand redirects straight to
-`/automations/<slug>/stage0` — the same 9-phase interview `stage-0-supplax` runs live
-in a Claude Code session (`src/stage0_questions.py`), fillable here instead so the
+`/automations/<slug>/stage1` — the same 9-phase interview `stage-1-supplax` runs live
+in a Claude Code session (`src/stage1_questions.py`), fillable here instead so the
 answers exist before the repo is even bootstrapped. It's skippable (there's a
 "Пропустити" link back to the automation's page) and can be revisited later from that
-page's "Stage 0" button.
+page's "Stage 1" button.
 
 There's also a machine-facing route for CI/automation pipelines to push a record
 without a browser session: `POST /api/automations/<slug>/sync`, authenticated with an
 `X-API-Key` header carrying an `admin`'s or `automator`'s personal `api_key` (printed
 once, in `create-user`'s CLI output — there's no UI to view or regenerate it, so save
-it then). This is what `stage-0-supplax`'s portfolio-sync step actually calls. The
+it then). This is what `stage-1-supplax`'s portfolio-sync step actually calls. The
 handler's own docstring (`src/app.py`) points to `references/portfolio-sync.md` for
 its payload schema, but that file doesn't exist in this repo yet — read the handler
 itself (`api_sync_automation` in `src/app.py`) for the current field list until it
-does. Its read-only counterpart, `GET /api/automations/<slug>/stage0-answers` (same
-`X-API-Key` auth), is how `stage-0-supplax`'s bootstrap step pulls back whatever Stage
-0 answers were already filled in above, so it can skip asking about them again.
+does. Its read-only counterpart, `GET /api/automations/<slug>/stage1-answers` (same
+`X-API-Key` auth), is how `stage-1-supplax`'s bootstrap step pulls back whatever Stage
+1 answers were already filled in above, so it can skip asking about them again.
 
 There's no automated test suite yet (`TESTING.md`: no test command exists to run) —
 verify a local change manually by clicking through login, registration, and the

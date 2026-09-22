@@ -2,7 +2,7 @@
 
 A staged list of prompts to run, in order, to build this project out — requested so
 future sessions can pick up the next stage without re-deriving context. Not part of
-stage-0-supplax's standard file menu; added because the project owner asked for it.
+stage-1-supplax's standard file menu; added because the project owner asked for it.
 
 **Status: skeleton only.** The stages below are placeholders, not real prompts yet —
 writing real, executable prompts before the design pass (data model, page layout,

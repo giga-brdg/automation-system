@@ -1,7 +1,7 @@
-"""Covers the Stage 0 interview feature: filling it in at
-/automations/<slug>/stage0, storage on Automation.stage0_answers, and the
-read-only GET /api/automations/<slug>/stage0-answers endpoint stage-0-supplax
-pulls from (see src/stage0_questions.py, SECURITY.md's Scope section for why
+"""Covers the Stage 1 interview feature: filling it in at
+/automations/<slug>/stage1, storage on Automation.stage1_answers, and the
+read-only GET /api/automations/<slug>/stage1-answers endpoint stage-1-supplax
+pulls from (see src/stage1_questions.py, SECURITY.md's Scope section for why
 this mirrors api_sync_automation's auth)."""
 import re
 
@@ -28,8 +28,8 @@ def _login(client, email, password="pw12345"):
     client.post("/login", data={"email": email, "password": password, "csrf_token": token})
 
 
-class TestStage0Form:
-    def test_registering_a_new_automation_redirects_to_stage0(self, app, client):
+class TestStage1Form:
+    def test_registering_a_new_automation_redirects_to_stage1(self, app, client):
         with app.app_context():
             _make_user("a@x.com", "A")
         _login(client, "a@x.com")
@@ -38,7 +38,7 @@ class TestStage0Form:
             "slug": "new-thing", "name": "New Thing", "status": "idea", "csrf_token": token,
         })
         assert resp.status_code == 302
-        assert resp.headers["Location"].endswith("/automations/new-thing/stage0")
+        assert resp.headers["Location"].endswith("/automations/new-thing/stage1")
 
     def test_saving_answers_stores_them_keyed_by_phase(self, app, client):
         with app.app_context():
@@ -47,8 +47,8 @@ class TestStage0Form:
             db.session.add(automation)
             db.session.commit()
         _login(client, "a@x.com")
-        token = _csrf_token(client.get("/automations/thing/stage0").get_data(as_text=True))
-        resp = client.post("/automations/thing/stage0", data={
+        token = _csrf_token(client.get("/automations/thing/stage1").get_data(as_text=True))
+        resp = client.post("/automations/thing/stage1", data={
             "csrf_token": token,
             "p1_one_liner": "Автоматизує щось корисне",
             "p1_audience": "internal_team",
@@ -58,12 +58,12 @@ class TestStage0Form:
         assert resp.status_code == 302
         with app.app_context():
             automation = Automation.query.filter_by(slug="thing").first()
-            assert automation.stage0_answers["1"]["one_liner"] == "Автоматизує щось корисне"
-            assert automation.stage0_answers["1"]["audience"] == "internal_team"
-            assert automation.stage0_answers["5"]["public_attack_surface"] == "no_internal_only"
-            assert automation.stage0_answers["4"]["test_types"] == ["unit", "integration"]
+            assert automation.stage1_answers["1"]["one_liner"] == "Автоматизує щось корисне"
+            assert automation.stage1_answers["1"]["audience"] == "internal_team"
+            assert automation.stage1_answers["5"]["public_attack_surface"] == "no_internal_only"
+            assert automation.stage1_answers["4"]["test_types"] == ["unit", "integration"]
             # Phases with nothing filled in don't show up at all.
-            assert "2" not in automation.stage0_answers
+            assert "2" not in automation.stage1_answers
 
     def test_blank_fields_are_not_stored(self, app, client):
         with app.app_context():
@@ -72,11 +72,11 @@ class TestStage0Form:
             db.session.add(automation)
             db.session.commit()
         _login(client, "a@x.com")
-        token = _csrf_token(client.get("/automations/thing/stage0").get_data(as_text=True))
-        client.post("/automations/thing/stage0", data={"csrf_token": token, "p1_one_liner": "   "})
+        token = _csrf_token(client.get("/automations/thing/stage1").get_data(as_text=True))
+        client.post("/automations/thing/stage1", data={"csrf_token": token, "p1_one_liner": "   "})
         with app.app_context():
             automation = Automation.query.filter_by(slug="thing").first()
-            assert automation.stage0_answers == {}
+            assert automation.stage1_answers == {}
 
     def test_a_non_owner_automator_cannot_fill_someone_elses_form(self, app, client):
         with app.app_context():
@@ -86,7 +86,7 @@ class TestStage0Form:
             db.session.add(automation)
             db.session.commit()
         _login(client, "other@x.com")
-        resp = client.get("/automations/thing/stage0")
+        resp = client.get("/automations/thing/stage1")
         assert resp.status_code == 403
 
     def test_admin_can_fill_anyones_form(self, app, client):
@@ -97,27 +97,27 @@ class TestStage0Form:
             db.session.add(automation)
             db.session.commit()
         _login(client, "admin@x.com")
-        resp = client.get("/automations/thing/stage0")
+        resp = client.get("/automations/thing/stage1")
         assert resp.status_code == 200
 
 
-class TestStage0AnswersApi:
+class TestStage1AnswersApi:
     def test_rejects_missing_key(self, app, client):
-        resp = client.get("/api/automations/thing/stage0-answers")
+        resp = client.get("/api/automations/thing/stage1-answers")
         assert resp.status_code == 401
 
     def test_rejects_unapproved_account(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A", is_approved=False)
             key = user.api_key
-        resp = client.get("/api/automations/thing/stage0-answers", headers={"X-API-Key": key})
+        resp = client.get("/api/automations/thing/stage1-answers", headers={"X-API-Key": key})
         assert resp.status_code == 403
 
     def test_404_when_no_automation(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A")
             key = user.api_key
-        resp = client.get("/api/automations/does-not-exist/stage0-answers", headers={"X-API-Key": key})
+        resp = client.get("/api/automations/does-not-exist/stage1-answers", headers={"X-API-Key": key})
         assert resp.status_code == 404
 
     def test_404_when_no_answers_filled_yet(self, app, client):
@@ -127,7 +127,7 @@ class TestStage0AnswersApi:
             automation = Automation(slug="thing", name="Thing", owner_id=user.id)
             db.session.add(automation)
             db.session.commit()
-        resp = client.get("/api/automations/thing/stage0-answers", headers={"X-API-Key": key})
+        resp = client.get("/api/automations/thing/stage1-answers", headers={"X-API-Key": key})
         assert resp.status_code == 404
 
     def test_returns_answers_for_the_owner(self, app, client):
@@ -135,10 +135,10 @@ class TestStage0AnswersApi:
             user = _make_user("a@x.com", "A")
             key = user.api_key
             automation = Automation(slug="thing", name="Thing", owner_id=user.id,
-                                     stage0_answers={"1": {"one_liner": "X"}})
+                                     stage1_answers={"1": {"one_liner": "X"}})
             db.session.add(automation)
             db.session.commit()
-        resp = client.get("/api/automations/thing/stage0-answers", headers={"X-API-Key": key})
+        resp = client.get("/api/automations/thing/stage1-answers", headers={"X-API-Key": key})
         assert resp.status_code == 200
         assert resp.get_json()["answers"] == {"1": {"one_liner": "X"}}
 
@@ -148,10 +148,10 @@ class TestStage0AnswersApi:
             other = _make_user("other@x.com", "Other")
             other_key = other.api_key
             automation = Automation(slug="thing", name="Thing", owner_id=owner.id,
-                                     stage0_answers={"1": {"one_liner": "X"}})
+                                     stage1_answers={"1": {"one_liner": "X"}})
             db.session.add(automation)
             db.session.commit()
-        resp = client.get("/api/automations/thing/stage0-answers", headers={"X-API-Key": other_key})
+        resp = client.get("/api/automations/thing/stage1-answers", headers={"X-API-Key": other_key})
         assert resp.status_code == 403
 
     def test_admin_key_can_read_anyones_answers(self, app, client):
@@ -160,8 +160,8 @@ class TestStage0AnswersApi:
             admin = _make_user("admin@x.com", "Admin", role=Role.ADMIN)
             admin_key = admin.api_key
             automation = Automation(slug="thing", name="Thing", owner_id=owner.id,
-                                     stage0_answers={"1": {"one_liner": "X"}})
+                                     stage1_answers={"1": {"one_liner": "X"}})
             db.session.add(automation)
             db.session.commit()
-        resp = client.get("/api/automations/thing/stage0-answers", headers={"X-API-Key": admin_key})
+        resp = client.get("/api/automations/thing/stage1-answers", headers={"X-API-Key": admin_key})
         assert resp.status_code == 200

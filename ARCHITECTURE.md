@@ -73,17 +73,17 @@ badge variant name that templates combine with that stylesheet's classes).
   authenticated per-user via an `X-API-Key` header (`User.api_key`) rather than
   session auth: `POST /api/automations/<slug>/sync`, which an external skill
   (`automation-portfolio-sync`) pushes a full metadata upsert to, and `GET
-  /api/automations/<slug>/stage0-answers`, a read-only counterpart that lets
-  `stage-0-supplax`'s own bootstrap step pull back whatever Stage 0 interview
-  answers (`Automation.stage0_answers`, filled at `/automations/<slug>/stage0`,
-  `src/stage0_questions.py`) were already entered in the dashboard, so it can skip
+  /api/automations/<slug>/stage1-answers`, a read-only counterpart that lets
+  `stage-1-supplax`'s own bootstrap step pull back whatever Stage 1 interview
+  answers (`Automation.stage1_answers`, filled at `/automations/<slug>/stage1`,
+  `src/stage1_questions.py`) were already entered in the dashboard, so it can skip
   re-asking. Neither endpoint calls out to GitHub; don't confuse either with the two
   routes above even though all four are colloquially "the sync."
 - **Database** — SQLite at `data/portfolio.db` by default with zero config; set
   `DATABASE_URL` to point at Postgres instead (`src/app.py`). Schema code is written to
   work against either backend. Holds: automations (with a free-text description, a
-  `stage0_answers` JSON blob for the Stage 0 interview keyed by phase number per
-  `src/stage0_questions.py` — null until someone fills in `/automations/<slug>/stage0`
+  `stage1_answers` JSON blob for the Stage 1 interview keyed by phase number per
+  `src/stage1_questions.py` — null until someone fills in `/automations/<slug>/stage1`
   — and `security_review_at`/`security_review_high`/`security_review_medium`, synced
   only from `dashboard/SECURITY_REVIEW.md`, never set any other way), a
   skills catalog (`Skill` — carries those same three `security_review_*` columns, via

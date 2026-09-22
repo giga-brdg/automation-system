@@ -20,7 +20,7 @@ from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import ai_usage, github_sync, telegram
-from . import stage0_questions
+from . import stage1_questions
 from .extensions import db, login_manager
 from .models import (
     Automation,
@@ -736,12 +736,12 @@ def register_routes(app):
                 apply_manual_form(automation, request.form)
                 db.session.add(automation)
                 db.session.commit()
-                # Straight to the Stage 0 interview next, not the detail page -
+                # Straight to the Stage 1 interview next, not the detail page -
                 # this is the point where answering it is cheapest (the automator
-                # is already here filling in the basics), and stage0_form.html
+                # is already here filling in the basics), and stage1_form.html
                 # itself links onward to automation_detail so it's a detour, not
                 # a dead end.
-                return redirect(url_for("automation_stage0", slug=automation.slug))
+                return redirect(url_for("automation_stage1", slug=automation.slug))
             flash("Форма містить помилки - перевір позначені поля.", "error")
             return render_template("automation_form.html", departments=departments, skills=skills,
                                     users=users, statuses=Status, automation=None, form_data=request.form,
@@ -777,25 +777,25 @@ def register_routes(app):
                                 default_spike_multiplier=ai_usage.SPIKE_MULTIPLIER_DEFAULT,
                                 ai_usage_projects=ai_usage.list_projects())
 
-    @app.route("/automations/<slug>/stage0", methods=["GET", "POST"])
+    @app.route("/automations/<slug>/stage1", methods=["GET", "POST"])
     @login_required
-    def automation_stage0(slug):
-        """The Stage 0 interview (src/stage0_questions.py), filled in the
-        dashboard so a later `stage-0-supplax` bootstrap run can pull it via
+    def automation_stage1(slug):
+        """The Stage 1 interview (src/stage1_questions.py), filled in the
+        dashboard so a later `stage-1-supplax` bootstrap run can pull it via
         the read-only API endpoint below and skip whatever's already
         answered here, instead of asking live in a Claude Code session."""
         automation = Automation.query.filter_by(slug=slug).first_or_404()
         if not current_user.can_manage(automation):
             abort(403)
         if request.method == "POST":
-            automation.stage0_answers = stage0_questions.collect_answers(request.form)
+            automation.stage1_answers = stage1_questions.collect_answers(request.form)
             db.session.commit()
-            n = stage0_questions.answered_phase_count(automation.stage0_answers)
-            flash(f"Відповіді Stage 0 збережено ({n}/9 фаз).", "success")
+            n = stage1_questions.answered_phase_count(automation.stage1_answers)
+            flash(f"Відповіді Stage 1 збережено ({n}/9 фаз).", "success")
             return redirect(url_for("automation_detail", slug=automation.slug))
-        return render_template("stage0_form.html", automation=automation,
-                                phases=stage0_questions.PHASES,
-                                answers=automation.stage0_answers or {})
+        return render_template("stage1_form.html", automation=automation,
+                                phases=stage1_questions.PHASES,
+                                answers=automation.stage1_answers or {})
 
     @app.route("/automations/import-github", methods=["GET", "POST"])
     @login_required
@@ -1138,7 +1138,7 @@ def register_routes(app):
     @app.route("/api/automations/<slug>/sync", methods=["POST"])
     @csrf.exempt  # machine-facing, X-API-Key auth - no Flask session to carry a CSRF token
     def api_sync_automation(slug):
-        """Machine-facing endpoint for stage-0-supplax's portfolio-sync step to
+        """Machine-facing endpoint for stage-1-supplax's portfolio-sync step to
         push a full automation record after a build finishes, authenticated by
         the owning automator's personal api_key rather than a browser session.
         Idempotent: safe to call again for the same slug to update it (owner
@@ -1233,14 +1233,14 @@ def register_routes(app):
         db.session.commit()
         return jsonify({"ok": True, "slug": automation.slug}), 200
 
-    @app.route("/api/automations/<slug>/stage0-answers", methods=["GET"])
+    @app.route("/api/automations/<slug>/stage1-answers", methods=["GET"])
     @csrf.exempt  # machine-facing, X-API-Key auth - same reasoning as api_sync_automation above
-    def api_stage0_answers(slug):
-        """Read-only counterpart to api_sync_automation: lets stage-0-supplax's
-        own bootstrap step pull whatever Stage 0 interview answers were
+    def api_stage1_answers(slug):
+        """Read-only counterpart to api_sync_automation: lets stage-1-supplax's
+        own bootstrap step pull whatever Stage 1 interview answers were
         already filled in on the automation's dashboard page
-        (/automations/<slug>/stage0), keyed the same way
-        src/stage0_questions.py stores them, so the skill can skip asking
+        (/automations/<slug>/stage1), keyed the same way
+        src/stage1_questions.py stores them, so the skill can skip asking
         about anything already present here. Same auth as the push endpoint
         (X-API-Key -> owner lookup -> role + is_approved check) - this is
         automation metadata, not user PII, but it's still gated to an
@@ -1259,9 +1259,9 @@ def register_routes(app):
         if automation.owner_id != owner.id and not owner.is_admin:
             return jsonify({"error": "automation exists under a different owner"}), 403
 
-        if not automation.stage0_answers:
-            return jsonify({"error": "no Stage 0 answers filled in yet"}), 404
-        return jsonify({"slug": automation.slug, "answers": automation.stage0_answers}), 200
+        if not automation.stage1_answers:
+            return jsonify({"error": "no Stage 1 answers filled in yet"}), 404
+        return jsonify({"slug": automation.slug, "answers": automation.stage1_answers}), 200
 
 
 def register_cli(app):
@@ -1366,6 +1366,28 @@ def register_cli(app):
         db.session.commit()
         click.echo("Migrated: added stage0_answers column to automation.")
 
+    @app.cli.command("migrate-rename-stage0-to-stage1")
+    def migrate_rename_stage0_to_stage1():
+        """Renames Automation.stage0_answers -> stage1_answers and the Skill row
+        'stage-0-supplax' -> 'stage-1-supplax', now that the skill itself is
+        renamed (see src/stage1_questions.py, automation_stage1,
+        api_stage1_answers). Safe to run more than once."""
+        existing_cols = {c["name"] for c in db.inspect(db.engine).get_columns("automation")}
+        if "stage0_answers" in existing_cols and "stage1_answers" not in existing_cols:
+            db.session.execute(db.text("ALTER TABLE automation RENAME COLUMN stage0_answers TO stage1_answers"))
+            db.session.commit()
+            click.echo("Migrated: renamed automation.stage0_answers to stage1_answers.")
+        else:
+            click.echo("Column already migrated - nothing to do.")
+
+        renamed = Skill.query.filter_by(name="stage-0-supplax").first()
+        if renamed:
+            renamed.name = "stage-1-supplax"
+            db.session.commit()
+            click.echo("Migrated: renamed skill 'stage-0-supplax' to 'stage-1-supplax'.")
+        else:
+            click.echo("No skill row named 'stage-0-supplax' - nothing to do.")
+
     @app.cli.command("migrate-security-review")
     def migrate_security_review():
         """One-off schema migration for the dashboard/SECURITY_REVIEW.md sync
@@ -1421,7 +1443,7 @@ def register_cli(app):
         README-only stub), because nothing distinguishes a real automation
         from any other repo in the org (an SDK, this dashboard's own repo)
         except that file. It also doesn't get silently dropped, though -
-        whether or not it has PIPELINE.md (stage-0-supplax's own bootstrap
+        whether or not it has PIPELINE.md (stage-1-supplax's own bootstrap
         marker - present means it *was* set up as an automation and just
         never finished reaching the dashboard; absent just means nobody's
         confirmed it either way), every non-archived repo without
@@ -1536,7 +1558,7 @@ def register_cli(app):
         "skill-security-auditor": "Перевіряє скіл на небезпечний код (виконання команд, мережеві "
             "запити, спроби промпт-ін'єкції) перед тим, як його встановити. Цінність: сторонній скіл не "
             "стане способом непомітно щось зламати чи вкрасти дані.",
-        "stage-0-supplax": "Створює повний стандартний набір документів для нового проєкту і вміє "
+        "stage-1-supplax": "Створює повний стандартний набір документів для нового проєкту і вміє "
             "окремо перевіряти вже написані доки на прогалини й суперечності. Цінність: жоден проєкт не "
             "стартує без базової документації, і стара документація не лишається неперевіреною.",
         "tdd-guide": "Допомагає писати тести й вести розробку через них — Jest, Pytest, JUnit, Vitest, "
@@ -1592,7 +1614,7 @@ def register_cli(app):
     @click.argument("owner_email")
     def seed_demo(owner_email):
         """Seed the two real pilot automations found in ClickUp (Stage 0
-        sales-forecast model, HR-бот) plus the stage-0-supplax skill entry,
+        sales-forecast model, HR-бот) plus the stage-1-supplax skill entry,
         owned by an existing user. Run create-user first."""
         owner = User.query.filter_by(email=owner_email.strip().lower()).first()
         if not owner:
@@ -1609,10 +1631,10 @@ def register_cli(app):
         sales = get_or_create_department("Sales", 275)
         hr = get_or_create_department("HR", 148)
 
-        skill = Skill.query.filter_by(name="stage-0-supplax").first()
+        skill = Skill.query.filter_by(name="stage-1-supplax").first()
         if not skill:
             skill = Skill(
-                name="stage-0-supplax",
+                name="stage-1-supplax",
                 description="Бутстрапить новий проєкт повним набором документації й реальною структурою папок "
                              "за один прохід: README/ARCHITECTURE/ROI/PIPELINE, бібліотека довідників, і опційна "
                              "глибока перевірка документів кількома агентами.",
