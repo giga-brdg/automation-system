@@ -136,14 +136,33 @@ badge variant name that templates combine with that stylesheet's classes).
   a shared multi-skill repo) the same way — and `src/templates/_security_chip.html` is
   the one shield-icon macro both `Automation` and `Skill` cards/detail panels render it
   through, so the four states (`none`/`clean`/`medium`/`high`) look identical everywhere.
-  Nothing in this app can trigger `/security-review` itself, sync only ever reads
-  whatever record a human/Claude session already
-  wrote and pushed.
+  Nothing in this app can trigger Claude Code's `/security-review` command itself —
+  sync only ever reads whatever record a human/Claude session already wrote and
+  pushed. It *can*, however, trigger the separate `giga-brdg/github-security-scan`
+  automation's own gitleaks/semgrep/osv-scanner/syft scan for one repo (see the
+  next bullet) — a different, scheduled/on-demand tool that writes the exact same
+  `dashboard/SECURITY_REVIEW.md` shape, not `/security-review` itself.
   `dashboard/SUMMARY.md`'s `## Skills` bullet list links the automation against the
   skills library (`/skills`) by exact name match — unlike `## Departments`, an
   unmatched skill name is skipped with a warning rather than auto-creating a bare
   library entry, since the library is a curated catalog, not free-text tags. Needs
   `GITHUB_TOKEN` in `.env` to read private repos.
+- **Security-scan trigger** — outbound call to a separate repo, `giga-brdg/
+  github-security-scan` (that project's own automated scanner, not this app's GitHub
+  sync above). Each automation's Security review card has a "Запустити перевірку"
+  button (`POST /automations/<slug>/trigger-security-scan`) that fires a
+  `workflow_dispatch` on that repo's `security-scan.yml`, scoped to just this
+  automation's `repo_url` via the workflow's `repo` input
+  (`src/github_sync.py`'s `dispatch_security_scan`) — so one automation can be
+  rescanned without re-scanning the whole `giga-brdg` org. Fire-and-forget: the scan
+  itself runs in that other repo's Actions and takes minutes, so this call only
+  confirms the run was queued (204 from GitHub's dispatch endpoint) — the existing
+  "Оновити" button (GitHub sync's `dashboard/SECURITY_REVIEW.md` re-fetch, above) is
+  still how this app picks up the result once the scan finishes and commits it.
+  Needs `SECURITY_SCAN_TRIGGER_TOKEN` in `.env` (Actions: write, scoped to that one
+  repo — deliberately separate from `GITHUB_TOKEN`'s broader read access above); the
+  button flashes an error instead of doing nothing when it's unset. See
+  `SECURITY.md`'s Scope/Known Limitations for this token's risk profile.
 - **ClickUp** — not an active integration. `clickup_url` is a plain field set manually
   or via the sync payload above; there is no ClickUp fetch/parse code anywhere in `src/`.
 - **Telegram bot** (`src/telegram_bot.py`) — live today and load-bearing for the

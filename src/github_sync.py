@@ -494,3 +494,41 @@ def security_review_fields_from_sections(sections):
         else:
             medium = count
     return {"reviewed_at": reviewed_at, "high": high, "medium": medium}
+
+
+# The separate GitHub-Security automation (giga-brdg/github-security-scan)
+# that actually runs gitleaks/semgrep/osv-scanner/syft and writes
+# dashboard/SECURITY_REVIEW.md back to each repo it scans - not this repo,
+# not configurable per-deployment, so these are constants rather than env
+# vars (unlike GITHUB_SYNC_ORG above, which does vary).
+SECURITY_SCAN_OWNER = "giga-brdg"
+SECURITY_SCAN_REPO = "github-security-scan"
+SECURITY_SCAN_WORKFLOW = "security-scan.yml"
+SECURITY_SCAN_REF = "main"
+
+
+def dispatch_security_scan(owner, repo, trigger_token):
+    """Fires a workflow_dispatch run of github-security-scan's
+    security-scan.yml, scoped to just `owner/repo` (its 'repo' input - see
+    that project's src/main.py resolve_target_repos) instead of the daily
+    cron's full-org scan. Fire-and-forget: GitHub's dispatch endpoint
+    returns 204 with no run id, and the scan itself takes minutes (full
+    clone + 4 scanners), so this only confirms the run was *queued*, not
+    that it finished - the existing 'Оновити' button (dashboard/
+    SECURITY_REVIEW.md re-fetch) is how a caller later picks up the result.
+    Raises urllib.error.HTTPError on any non-204 response (bad/expired
+    trigger_token, workflow renamed, etc.) - the caller turns that into a
+    flash message."""
+    url = (f"https://api.github.com/repos/{SECURITY_SCAN_OWNER}/{SECURITY_SCAN_REPO}"
+           f"/actions/workflows/{SECURITY_SCAN_WORKFLOW}/dispatches")
+    body = json.dumps({"ref": SECURITY_SCAN_REF, "inputs": {"repo": f"{owner}/{repo}"}}).encode("utf-8")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "supplax-automation-portfolio",
+        "Authorization": f"Bearer {trigger_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=10):
+        pass

@@ -184,3 +184,165 @@ class TestSecurityReviewGithubSync:
 
         html = client.get("/automations/thing").get_data(as_text=True)
         assert "Перевірено — є знахідки (High)" in html
+
+
+class TestSecurityReviewOnlyResync:
+    """The dedicated 'Оновити' button on the Security review card
+    (/automations/<slug>/resync-security) - re-fetches only
+    dashboard/SECURITY_REVIEW.md, unlike the full 'Оновити з GitHub' button."""
+
+    def _stub_fetch(self, monkeypatch, security_review_text, other_calls=None):
+        def fake_fetch(owner, repo, path, branch):
+            if other_calls is not None:
+                other_calls.append(path)
+            if path == "dashboard/SECURITY_REVIEW.md":
+                return security_review_text
+            raise AssertionError(f"resync-security should only fetch SECURITY_REVIEW.md, got {path}")
+        monkeypatch.setattr(github_sync, "fetch_raw_file", fake_fetch)
+        monkeypatch.setattr(github_sync, "default_branch", lambda owner, repo: "main")
+
+    def test_updates_only_security_fields(self, app, client, monkeypatch):
+        self._stub_fetch(monkeypatch, "## Last Review\n2026-09-20\n\n## Open Findings\n- High: 1\n- Medium: 0\n")
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id,
+                                     one_liner="original one-liner",
+                                     repo_url="https://github.com/acme/thing")
+            db.session.add(automation)
+            db.session.commit()
+        _login(client, "a@x.com")
+        token = _csrf_token(client.get("/automations/thing").get_data(as_text=True))
+        resp = client.post("/automations/thing/resync-security", data={"csrf_token": token})
+        assert resp.status_code == 302
+        with app.app_context():
+            automation = Automation.query.filter_by(slug="thing").first()
+            assert automation.security_review_state == "high"
+            assert automation.security_review_high == 1
+            assert automation.security_review_medium == 0
+            assert automation.security_review_at.strftime("%Y-%m-%d") == "2026-09-20"
+            # Unrelated fields untouched - this button only refreshes security data.
+            assert automation.one_liner == "original one-liner"
+
+    def test_missing_file_flashes_error_and_keeps_previous_state(self, app, client, monkeypatch):
+        self._stub_fetch(monkeypatch, None)
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id,
+                                     repo_url="https://github.com/acme/thing",
+                                     security_review_at=datetime(2026, 9, 1),
+                                     security_review_high=0, security_review_medium=0)
+            db.session.add(automation)
+            db.session.commit()
+        _login(client, "a@x.com")
+        token = _csrf_token(client.get("/automations/thing").get_data(as_text=True))
+        client.post("/automations/thing/resync-security", data={"csrf_token": token})
+        with app.app_context():
+            automation = Automation.query.filter_by(slug="thing").first()
+            assert automation.security_review_state == "clean"
+            assert automation.security_review_at.strftime("%Y-%m-%d") == "2026-09-01"
+
+    def test_without_manage_permission_is_forbidden(self, app, client, monkeypatch):
+        self._stub_fetch(monkeypatch, "## Last Review\n2026-09-20\n\n## Open Findings\n- High: 0\n- Medium: 0\n")
+        with app.app_context():
+            owner = _make_user("owner@x.com", "Owner")
+            _make_user("other@x.com", "Other", role=Role.VIEWER)
+            automation = Automation(slug="thing", name="Thing", owner_id=owner.id,
+                                     repo_url="https://github.com/acme/thing")
+            db.session.add(automation)
+            db.session.commit()
+        token = _csrf_token(client.get("/login").get_data(as_text=True))
+        client.post("/login", data={"email": "other@x.com", "password": "pw12345", "csrf_token": token})
+        resp = client.post("/automations/thing/resync-security", data={"csrf_token": token})
+        assert resp.status_code == 403
+
+
+class TestSecurityScanTrigger:
+    """The 'Запустити перевірку' button
+    (/automations/<slug>/trigger-security-scan) - fires a workflow_dispatch
+    on the separate github-security-scan automation via
+    github_sync.dispatch_security_scan, scoped to just this repo. Doesn't
+    touch security_review_* itself (the scan writes those back to GitHub
+    asynchronously; 'Оновити' picks the result up later)."""
+
+    def test_dispatches_scan_for_this_repos_owner_and_name(self, app, client, monkeypatch):
+        monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
+        calls = []
+        monkeypatch.setattr(github_sync, "dispatch_security_scan",
+                             lambda owner, repo, tok: calls.append((owner, repo, tok)))
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id,
+                                     repo_url="https://github.com/acme/thing")
+            db.session.add(automation)
+            db.session.commit()
+        _login(client, "a@x.com")
+        token = _csrf_token(client.get("/automations/thing").get_data(as_text=True))
+        resp = client.post("/automations/thing/trigger-security-scan", data={"csrf_token": token})
+        assert resp.status_code == 302
+        assert calls == [("acme", "thing", "trigger-tok")]
+
+    def test_without_trigger_token_configured_flashes_error(self, app, client, monkeypatch):
+        monkeypatch.delenv("SECURITY_SCAN_TRIGGER_TOKEN", raising=False)
+        calls = []
+        monkeypatch.setattr(github_sync, "dispatch_security_scan",
+                             lambda owner, repo, tok: calls.append((owner, repo, tok)))
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id,
+                                     repo_url="https://github.com/acme/thing")
+            db.session.add(automation)
+            db.session.commit()
+        _login(client, "a@x.com")
+        token = _csrf_token(client.get("/automations/thing").get_data(as_text=True))
+        resp = client.post("/automations/thing/trigger-security-scan", data={"csrf_token": token})
+        assert resp.status_code == 302
+        assert calls == []
+
+    def test_without_repo_url_flashes_error(self, app, client, monkeypatch):
+        monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
+        calls = []
+        monkeypatch.setattr(github_sync, "dispatch_security_scan",
+                             lambda owner, repo, tok: calls.append((owner, repo, tok)))
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id)
+            db.session.add(automation)
+            db.session.commit()
+        token = _csrf_token(client.get("/login").get_data(as_text=True))
+        client.post("/login", data={"email": "a@x.com", "password": "pw12345", "csrf_token": token})
+        client.post("/automations/thing/trigger-security-scan", data={"csrf_token": token})
+        assert calls == []
+
+    def test_dispatch_failure_flashes_error_instead_of_500(self, app, client, monkeypatch):
+        monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
+
+        def boom(owner, repo, tok):
+            raise RuntimeError("HTTP 401")
+        monkeypatch.setattr(github_sync, "dispatch_security_scan", boom)
+        with app.app_context():
+            user = _make_user("a@x.com", "A")
+            automation = Automation(slug="thing", name="Thing", owner_id=user.id,
+                                     repo_url="https://github.com/acme/thing")
+            db.session.add(automation)
+            db.session.commit()
+        _login(client, "a@x.com")
+        token = _csrf_token(client.get("/automations/thing").get_data(as_text=True))
+        resp = client.post("/automations/thing/trigger-security-scan", data={"csrf_token": token})
+        assert resp.status_code == 302
+        html = client.get("/automations/thing").get_data(as_text=True)
+        assert "Не вдалося запустити сканування" in html
+
+    def test_without_manage_permission_is_forbidden(self, app, client, monkeypatch):
+        monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
+        monkeypatch.setattr(github_sync, "dispatch_security_scan", lambda owner, repo, tok: None)
+        with app.app_context():
+            owner = _make_user("owner@x.com", "Owner")
+            _make_user("other@x.com", "Other", role=Role.VIEWER)
+            automation = Automation(slug="thing", name="Thing", owner_id=owner.id,
+                                     repo_url="https://github.com/acme/thing")
+            db.session.add(automation)
+            db.session.commit()
+        token = _csrf_token(client.get("/login").get_data(as_text=True))
+        client.post("/login", data={"email": "other@x.com", "password": "pw12345", "csrf_token": token})
+        resp = client.post("/automations/thing/trigger-security-scan", data={"csrf_token": token})
+        assert resp.status_code == 403

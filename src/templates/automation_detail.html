@@ -307,7 +307,25 @@
 
     <div class="card">
       <div class="card-body">
-        <h5 class="card-title">Security review</h5>
+        <div class="d-flex align-items-center justify-content-between">
+          <h5 class="card-title mb-0">Security review</h5>
+          {% if automation.repo_url and current_user.can_manage(automation) %}
+          <div class="d-flex gap-2">
+            <form method="post" action="{{ url_for('automation_trigger_security_scan', slug=automation.slug) }}" class="mb-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-light-secondary btn-sm d-inline-flex align-items-center gap-1">
+                <i class="ti ti-shield-search f-14"></i> Запустити перевірку
+              </button>
+            </form>
+            <form method="post" action="{{ url_for('automation_resync_security', slug=automation.slug) }}" class="mb-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-light-secondary btn-sm d-inline-flex align-items-center gap-1">
+                <i class="ti ti-refresh f-14"></i> Оновити
+              </button>
+            </form>
+          </div>
+          {% endif %}
+        </div>
         {{ sec.security_chip(automation.security_review_state, automation.security_review_label) }}
         <div class="mt-2" style="line-height:1.5;">
           {% if automation.security_review_state == 'none' %}

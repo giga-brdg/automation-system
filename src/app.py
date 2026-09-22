@@ -864,6 +864,86 @@ def register_routes(app):
         flash("Оновлено з GitHub." + (" " + " ".join(warnings) if warnings else ""), "success")
         return redirect(url_for("automation_detail", slug=automation.slug))
 
+    @app.route("/automations/<slug>/resync-security", methods=["POST"])
+    @login_required
+    def automation_resync_security(slug):
+        """Narrower sibling of 'Оновити з GitHub' - re-fetches only
+        dashboard/SECURITY_REVIEW.md and updates just the three
+        security_review_* columns, leaving ROI/SUMMARY/BACKLOG/TODO alone.
+        For re-checking security status on its own after a repo's
+        SECURITY_REVIEW.md changed, without also picking up unrelated
+        edits (e.g. an in-progress ROI rewrite) a full resync would pull in."""
+        automation = Automation.query.filter_by(slug=slug).first_or_404()
+        if not current_user.can_manage(automation):
+            abort(403)
+        repo_url = automation.repo_url
+        if not repo_url:
+            flash("У цієї автоматизації не вказано посилання на репозиторій.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+        parsed = github_sync.parse_repo_url(repo_url)
+        if not parsed:
+            flash("Не схоже на посилання на GitHub-репозиторій.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+        owner_gh, repo = parsed
+        try:
+            branch = github_sync.default_branch(owner_gh, repo)
+            security_review_text = github_sync.fetch_raw_file(
+                owner_gh, repo, "dashboard/SECURITY_REVIEW.md", branch)
+        except Exception:
+            app.logger.exception("Security review resync failed for %s", repo_url)
+            flash("Не вдалося звернутися до GitHub — перевір, чи репозиторій усе ще доступний.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+
+        if security_review_text is None:
+            flash("dashboard/SECURITY_REVIEW.md не знайдено в репозиторії — статус лишився попереднім.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+
+        sec_fields = github_sync.security_review_fields_from_sections(
+            github_sync.parse_security_review_md(security_review_text))
+        automation.security_review_at = sec_fields["reviewed_at"]
+        automation.security_review_high = sec_fields["high"]
+        automation.security_review_medium = sec_fields["medium"]
+        db.session.commit()
+        flash("Security review оновлено з GitHub.", "success")
+        return redirect(url_for("automation_detail", slug=automation.slug))
+
+    @app.route("/automations/<slug>/trigger-security-scan", methods=["POST"])
+    @login_required
+    def automation_trigger_security_scan(slug):
+        """Kicks off a fresh scan for just this automation's repo, via the
+        separate github-security-scan automation's workflow_dispatch (see
+        github_sync.dispatch_security_scan) - unlike resync-security above,
+        this doesn't read an existing dashboard/SECURITY_REVIEW.md, it asks
+        for a new one to be written. Fire-and-forget: the scan takes
+        minutes, so this only confirms the run was queued - use 'Оновити'
+        afterwards to pick up the result once it's written."""
+        automation = Automation.query.filter_by(slug=slug).first_or_404()
+        if not current_user.can_manage(automation):
+            abort(403)
+        trigger_token = os.environ.get("SECURITY_SCAN_TRIGGER_TOKEN")
+        if not trigger_token:
+            flash("SECURITY_SCAN_TRIGGER_TOKEN не налаштовано — запуск сканування недоступний.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+        repo_url = automation.repo_url
+        if not repo_url:
+            flash("У цієї автоматизації не вказано посилання на репозиторій.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+        parsed = github_sync.parse_repo_url(repo_url)
+        if not parsed:
+            flash("Не схоже на посилання на GitHub-репозиторій.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+        owner_gh, repo = parsed
+        try:
+            github_sync.dispatch_security_scan(owner_gh, repo, trigger_token)
+        except Exception:
+            app.logger.exception("Security scan dispatch failed for %s", repo_url)
+            flash("Не вдалося запустити сканування — перевір SECURITY_SCAN_TRIGGER_TOKEN і доступ до "
+                  "github-security-scan.", "error")
+            return redirect(url_for("automation_detail", slug=slug))
+
+        flash("Перевірку запущено, онови сторінку за кілька хвилин і натисни «Оновити».", "success")
+        return redirect(url_for("automation_detail", slug=slug))
+
     @app.route("/automations/pending/<int:pending_id>/dismiss", methods=["POST"])
     @login_required
     @automator_required

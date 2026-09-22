@@ -1,7 +1,7 @@
 # Security Policy
 
 ## Scope
-Covers this repo's app, as four separate surfaces:
+Covers this repo's app, as five separate surfaces:
 - the login/registration flow (`src/app.py`'s `register()`/`login()`/`confirm()`);
 - the Telegram admin-approval bot (`src/telegram_bot.py`);
 - the API-key-authenticated automation-sync endpoints (`POST
@@ -26,7 +26,19 @@ Covers this repo's app, as four separate surfaces:
   admin/automator-supplied URL (restricted to `github.com`/
   `raw.githubusercontent.com` by `github_sync.REPO_URL_RE`) using `GITHUB_TOKEN`
   — see the Known Limitations entry below for that token and the untrusted-input
-  angle.
+  angle;
+- the security-scan trigger (`src/github_sync.py`'s `dispatch_security_scan`,
+  invoked by `POST /automations/<slug>/trigger-security-scan` in `src/app.py`).
+  Gated the same way as resync above (`@login_required` plus
+  `current_user.can_manage(automation)`), but its risk is the opposite
+  direction from GitHub-sync's: instead of reading files from an
+  admin/automator-supplied repo, it makes an authenticated **write** call —
+  a `workflow_dispatch` — into a specific, hardcoded repo
+  (`giga-brdg/github-security-scan`, not admin-suppliable) using a separate
+  token, `SECURITY_SCAN_TRIGGER_TOKEN`. That token is intentionally scoped to
+  Actions: write on that one repo alone (see the Known Limitations entry
+  below), so this endpoint can queue a scan run there but can't read or write
+  anything else in that repo or any other.
 
 ClickUp is **not** in scope because there is no ClickUp integration to cover:
 `clickup_url` (`src/models.py`) is a plain link a user types into a form, and
@@ -121,6 +133,18 @@ checked directly against the deployed app after the migration ran.
   rows; templates don't use Jinja's `|safe` on it (checked), so this isn't a
   known stored-XSS path today, but it hasn't been reviewed as untrusted input
   beyond that.
+- **Security-scan trigger** (`src/github_sync.py`'s `dispatch_security_scan`):
+  holds `SECURITY_SCAN_TRIGGER_TOKEN`, a fine-grained PAT scoped to Actions:
+  write on `giga-brdg/github-security-scan` alone (`.env.example`) —
+  deliberately narrower than `GITHUB_TOKEN` above, and deliberately separate
+  from that other repo's own `SECURITY_SCAN_WRITE_TOKEN` (Contents: write on
+  every scanned repo), so leaking this one can only queue scan runs, not read
+  or write repo content anywhere. The target repo and workflow filename
+  (`SECURITY_SCAN_OWNER`/`SECURITY_SCAN_REPO`/`SECURITY_SCAN_WORKFLOW` in
+  `github_sync.py`) are hardcoded, not admin-suppliable, so this endpoint
+  can't be pointed at an arbitrary repo the way GitHub-sync's `repo_url` can —
+  the only per-call input is which of *this* dashboard's own automations to
+  scan.
 - **Authorization model / IDOR — Fixed.** Three roles (`Role.ADMIN`/
   `AUTOMATOR`/`VIEWER`, `src/models.py`) gated by `admin_required`/
   `automator_required`/`User.can_manage` (`src/app.py`) describe who can do
@@ -222,8 +246,8 @@ with repo access, so it's a last resort when the two options above genuinely
 aren't available, not a first choice.
 
 When reporting, include what component is affected (login/registration, the
-Telegram bot, the API-key sync endpoint, or GitHub-sync — see Scope above),
-repro steps, and impact — there's no formal severity rubric yet, so
+Telegram bot, the API-key sync endpoint, GitHub-sync, or the security-scan
+trigger — see Scope above), repro steps, and impact — there's no formal severity rubric yet, so
 when in doubt, report it and let the owner triage. (Repro steps and impact go
 in the GHSA/owner-contact report itself, not in a public fallback issue — see
 above.)
