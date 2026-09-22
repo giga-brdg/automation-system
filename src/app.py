@@ -127,6 +127,35 @@ def create_app():
     def load_user(user_id):
         return db.session.get(User, int(user_id))
 
+    @app.template_filter("reflow")
+    def reflow(text):
+        """Joins hard-wrapped source lines back into full paragraphs.
+
+        The prose these fields hold is synced verbatim out of each repo's own
+        Markdown (dashboard/SUMMARY.md, dashboard/functions.md), where lines
+        are wrapped at ~75 characters like any hand-edited doc. Rendering that
+        under `white-space: pre-line` turned every one of those wraps into a
+        real line break, so the text stopped at roughly half the card's width
+        no matter how wide the screen was. Blank-line paragraph breaks are
+        real authorial intent and survive; a line opening a bullet keeps its
+        own break so a list doesn't collapse into one run-on line.
+        """
+        if not text:
+            return ""
+        out = []
+        for paragraph in re.split(r"\n\s*\n", text.strip()):
+            joined = ""
+            for line in paragraph.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if joined and not re.match(r"^([-*•]|\d+[.)])\s", line):
+                    joined += " " + line
+                else:
+                    joined += ("\n" if joined else "") + line
+            out.append(joined)
+        return "\n\n".join(out)
+
     register_routes(app)
     register_cli(app)
     return app
