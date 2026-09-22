@@ -353,7 +353,7 @@
           </div>
           {% endif %}
         </div>
-        <div class="mt-4">{{ sec.security_chip(automation.security_review_state, automation.security_review_label) }}</div>
+        <div style="margin-top:1.25rem;">{{ sec.security_chip(automation.security_review_state, automation.security_review_label) }}</div>
         <div class="mt-2" style="line-height:1.5;">
           {% if automation.security_review_state == 'none' %}
           <span class="text-muted f-12">Ще не проходила через `/security-review` — або проходила, але dashboard/SECURITY_REVIEW.md
