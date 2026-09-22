@@ -200,30 +200,6 @@ def list_directory(owner, repo, path, branch):
     return [{"name": e["name"], "type": e["type"]} for e in data]
 
 
-def fetch_latest_commit(owner, repo, branch):
-    """Returns {"message": <subject line>, "date": <ISO 8601 string>} for the
-    latest commit on `branch`, or None. Deliberately raw - the caller doesn't
-    interpret the message into a "stage"; a commit's type/wording doesn't
-    reliably map to lifecycle phase (a `fix:` commit happens as often on
-    day one as a year into production), so this is shown as a plain fact,
-    not a guess dressed up as one."""
-    url = f"https://api.github.com/repos/{owner}/{repo}/commits?sha={branch}&per_page=1"
-    req = urllib.request.Request(url, headers=_github_headers())
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
-    if not data:
-        return None
-    commit = data[0]["commit"]
-    subject = commit["message"].splitlines()[0].strip()
-    date = commit.get("author", {}).get("date") or commit.get("committer", {}).get("date")
-    return {"message": subject, "date": date}
-
-
 def parse_readme(text):
     """First '# Title' line as the name, first real paragraph after it as the
     one-liner - matches how stage-1-supplax's README.md template is shaped."""
@@ -344,7 +320,6 @@ def summary_fields_from_sections(sections):
         "status": status_raw or None,
         "connections": connections,
         "pages": parse_pages_section(sections.get("Pages", "")),
-        "current_stage_override": sections.get("Current Stage") or None,
     }
 
 

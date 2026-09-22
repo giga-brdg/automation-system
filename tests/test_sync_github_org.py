@@ -38,7 +38,6 @@ def _stub_org(monkeypatch, repos, summaries, pipelines=None):
         return None
     monkeypatch.setattr(github_sync, "fetch_raw_file", fake_fetch)
     monkeypatch.setattr(github_sync, "default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(github_sync, "fetch_latest_commit", lambda owner, repo, branch: None)
 
 
 def _repo(name, archived=False, private=False):
@@ -383,13 +382,13 @@ class TestSyncGithubOrgRobustness:
                 {"first-ok": "## Name\nFirst\n", "second-broken": "## Name\nBroken\n",
                  "third-ok": "## Name\nThird\n"},
             )
-            real_fetch_latest_commit = github_sync.fetch_latest_commit
+            stubbed_fetch_raw_file = github_sync.fetch_raw_file
 
-            def flaky_fetch_latest_commit(owner, repo, branch):
+            def flaky_fetch_raw_file(owner, repo, path, branch):
                 if repo == "second-broken":
                     raise RuntimeError("simulated transient GitHub error")
-                return real_fetch_latest_commit(owner, repo, branch)
-            monkeypatch.setattr(github_sync, "fetch_latest_commit", flaky_fetch_latest_commit)
+                return stubbed_fetch_raw_file(owner, repo, path, branch)
+            monkeypatch.setattr(github_sync, "fetch_raw_file", flaky_fetch_raw_file)
 
             summary = run_github_org_sync(app, "giga-brdg")
             # The two good repos are committed and counted even though the

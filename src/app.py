@@ -221,7 +221,6 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
     todo_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/TODO.md", branch)
     if todo_text is None:
         todo_text = github_sync.fetch_raw_file(owner_gh, repo, "TODO.md", branch)
-    latest_commit = github_sync.fetch_latest_commit(owner_gh, repo, branch)
 
     title, one_liner = github_sync.parse_readme(readme_text)
     roi_sections = github_sync.parse_roi_md(roi_text)
@@ -239,17 +238,6 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
     automation.description = summary["description"] or automation.description
     automation.repo_url = repo_url
     automation.owner_id = owner_id
-    automation.last_synced_at = _now()
-    if summary_text:
-        # Only overwrite the manual override when SUMMARY.md was actually
-        # fetched - otherwise a missing file would silently wipe out a
-        # human-entered override ("очікуємо погодження") just because
-        # the file wasn't there to read, not because anyone cleared it.
-        automation.current_stage_override = summary["current_stage_override"]
-    if latest_commit:
-        automation.last_commit_message = latest_commit["message"]
-        if latest_commit["date"]:
-            automation.last_commit_at = datetime.fromisoformat(latest_commit["date"].replace("Z", "+00:00"))
 
     warnings = []
     if not summary_text:

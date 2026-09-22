@@ -241,21 +241,6 @@ class Automation(SecurityReviewMixin, db.Model):
     clickup_url = db.Column(db.String(500))
     created_at = db.Column(db.DateTime, default=_now)
     updated_at = db.Column(db.DateTime, default=_now, onupdate=_now)
-    # Separate from updated_at, which also changes on a manual edit - this is
-    # specifically "when did a GitHub pull last actually happen", so the page
-    # can say which kind of freshness it's showing.
-    last_synced_at = db.Column(db.DateTime)
-    # Deliberately a raw fact (the last commit's own subject line + when it
-    # happened), not an interpreted "stage" - a commit type/message doesn't
-    # reliably map to lifecycle stage, and pretending otherwise misleads more
-    # than it helps. See TODO.md's "real-time build stage" entry for why this
-    # shape was chosen over a guessed one.
-    last_commit_message = db.Column(db.String(500))
-    last_commit_at = db.Column(db.DateTime)
-    # Optional human override (dashboard/SUMMARY.md's '## Current Stage') for
-    # anything a commit can't say - "очікуємо погодження", "заблоковано
-    # тікетом X". Takes priority over last_commit_message when present.
-    current_stage_override = db.Column(db.String(500))
     # Manual "+"-style link to ai-usage-collector's own projects.id (a
     # different system's Postgres - see src/ai_usage.py). No cross-DB FK is
     # possible; this is a plain nullable int the automator looks up and types

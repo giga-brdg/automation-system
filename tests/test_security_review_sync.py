@@ -133,7 +133,6 @@ class TestSecurityReviewGithubSync:
             return None
         monkeypatch.setattr(github_sync, "fetch_raw_file", fake_fetch)
         monkeypatch.setattr(github_sync, "default_branch", lambda owner, repo: "main")
-        monkeypatch.setattr(github_sync, "fetch_latest_commit", lambda owner, repo, branch: None)
 
     def test_import_picks_up_a_clean_review(self, app, client, monkeypatch):
         self._stub_fetch(monkeypatch, "## Last Review\n2026-09-14\n\n## Open Findings\n- High: 0\n- Medium: 0\n")
