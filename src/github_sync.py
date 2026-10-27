@@ -133,6 +133,22 @@ def fetch_raw_file(owner, repo, path, branch):
         raise
 
 
+def fetch_head_sha(owner, repo, branch):
+    """The commit sha `branch` points at, or None if GitHub doesn't answer -
+    the metrics snapshot records it so a confirmation can name the exact
+    commit it was made against. Same api.github.com flakiness as
+    default_branch above, but here there's no raw-host fallback to try, and
+    a missing sha must never block a sync, so any failure is just None."""
+    headers = dict(_github_headers(), Accept="application/vnd.github.sha")
+    req = urllib.request.Request(f"https://api.github.com/repos/{owner}/{repo}/commits/{branch}", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            sha = resp.read().decode("utf-8").strip()
+    except Exception:
+        return None
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
 def fetch_raw_bytes(owner, repo, path, branch):
     """Byte-preserving twin of fetch_raw_file - used to package a skill's
     folder into a downloadable zip, where a file (an image under

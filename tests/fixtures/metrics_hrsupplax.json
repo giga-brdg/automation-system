@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "launched_at": "2026-07-22",
+  "metrics": [
+    {
+      "id": "no-responses",
+      "name": "Вакансії без відгуків довше порогу",
+      "type": "quality",
+      "unit": "% вакансіє-днів",
+      "direction": "down",
+      "primary": false,
+      "baseline": {
+        "value": 15,
+        "period": "2026-05-20..2026-07-21",
+        "source": "scripts/roi_report.py, запуск 22.09.2026 (вікно до: стільки ж робочих днів перед запуском, скільки після, за _before_weekdays)",
+        "kind": "measured"
+      },
+      "target": null,
+      "method": "ретроспективна симуляція правила на однакових за кількістю робочих днів вікнах до і після запуску; частка днів, коли з останньої заявки на відкриту вакансію минуло понад 48/72/96 робочих год",
+      "check_every_days": null,
+      "measurements": [
+        {
+          "date": "2026-09-22",
+          "period": "2026-07-22..2026-09-22",
+          "value": 12,
+          "source": "scripts/roi_report.py, кеш рухів 55 018 записів",
+          "kind": "measured",
+          "note": ""
+        }
+      ],
+      "money": null
+    },
+    {
+      "id": "funnel-stalled",
+      "name": "Воронка стоїть",
+      "type": "quality",
+      "unit": "% вакансіє-днів",
+      "direction": "down",
+      "primary": false,
+      "baseline": {
+        "value": 17,
+        "period": "2026-05-20..2026-07-21",
+        "source": "scripts/roi_report.py, запуск 22.09.2026 (вікно до: стільки ж робочих днів перед запуском, скільки після, за _before_weekdays)",
+        "kind": "measured"
+      },
+      "target": null,
+      "method": "ретроспективна симуляція правила на однакових вікнах до і після запуску; частка днів, коли за попередні 7 днів жоден кандидат вакансії не просунувся далі «Відібрано»",
+      "check_every_days": null,
+      "measurements": [
+        {
+          "date": "2026-09-22",
+          "period": "2026-07-22..2026-09-22",
+          "value": 13,
+          "source": "scripts/roi_report.py, кеш рухів 55 018 записів",
+          "kind": "measured",
+          "note": ""
+        }
+      ],
+      "money": null
+    },
+    {
+      "id": "stuck-on-stage",
+      "name": "Заявки, що застрягли на етапі довше ліміту",
+      "type": "quality",
+      "unit": "% заявко-днів",
+      "direction": "down",
+      "primary": false,
+      "baseline": {
+        "value": 28,
+        "period": "2026-05-20..2026-07-21",
+        "source": "scripts/roi_report.py, запуск 22.09.2026 (вікно до: стільки ж робочих днів перед запуском, скільки після, за _before_weekdays)",
+        "kind": "measured"
+      },
+      "target": null,
+      "method": "ретроспективна симуляція правила на однакових вікнах до і після запуску; частка заявко-днів з перевищенням ліміту етапу серед усіх заявко-днів на лімітованих етапах",
+      "check_every_days": null,
+      "measurements": [
+        {
+          "date": "2026-09-22",
+          "period": "2026-07-22..2026-09-22",
+          "value": 16,
+          "source": "scripts/roi_report.py, кеш рухів 55 018 записів",
+          "kind": "measured",
+          "note": ""
+        }
+      ],
+      "money": null
+    },
+    {
+      "id": "feedback-waiting",
+      "name": "Очікування фідбеку від керівника",
+      "type": "quality",
+      "unit": "% заявко-днів",
+      "direction": "down",
+      "primary": false,
+      "baseline": {
+        "value": 76,
+        "period": "2026-05-20..2026-07-21",
+        "source": "scripts/roi_report.py, запуск 22.09.2026 (вікно до: стільки ж робочих днів перед запуском, скільки після, за _before_weekdays)",
+        "kind": "measured"
+      },
+      "target": null,
+      "method": "ретроспективна симуляція правила на однакових вікнах до і після запуску; частка заявко-днів на етапі «Подано керівнику на розгляд», що чекають рішення 2 робочих дні або більше",
+      "check_every_days": null,
+      "measurements": [
+        {
+          "date": "2026-09-22",
+          "period": "2026-07-22..2026-09-22",
+          "value": 56,
+          "source": "scripts/roi_report.py, кеш рухів 55 018 записів",
+          "kind": "measured",
+          "note": "загалом; b2b 81→50, marketing 100→71, sales_masters 51→56"
+        }
+      ],
+      "money": null
+    }
+  ],
+  "open_questions": []
+}

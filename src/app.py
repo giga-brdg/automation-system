@@ -19,7 +19,7 @@ from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import ai_usage, github_sync, telegram
+from . import ai_usage, github_sync, metrics_sync, telegram
 from . import stage1_questions
 from . import value_dashboard
 from .extensions import db, login_manager
@@ -185,7 +185,7 @@ def automator_required(view):
 
 
 def sync_automation_from_github(automation, repo_url, owner_id, form_status, selected_dept_ids, slug=None,
-                                 prefetched_summary_text=None):
+                                 prefetched_summary_text=None, actor=None):
     """Shared by the first-time import form and the per-automation
     'Оновити з GitHub' button: fetch README.md/dashboard/ROI.md/
     dashboard/SUMMARY.md and apply them to `automation` (a new unsaved
@@ -199,7 +199,10 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
 
     `prefetched_summary_text`: pass this when the caller already fetched
     dashboard/SUMMARY.md itself (run_github_org_sync does, to decide
-    pending-vs-synced before calling here) so this doesn't fetch it again."""
+    pending-vs-synced before calling here) so this doesn't fetch it again.
+
+    `actor`: the logged-in user who started the sync, for the metrics
+    snapshot and journal - None for the org-wide scan ("github sync")."""
     parsed = github_sync.parse_repo_url(repo_url)
     if not parsed:
         raise ValueError("Не схоже на посилання на GitHub-репозиторій "
@@ -221,6 +224,9 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
     todo_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/TODO.md", branch)
     if todo_text is None:
         todo_text = github_sync.fetch_raw_file(owner_gh, repo, "TODO.md", branch)
+    # Optional: a repo without it keeps the old ROI.md-only behaviour, and
+    # the commit lookup is only worth a round-trip when there's a file to pin.
+    metrics_text = github_sync.fetch_raw_file(owner_gh, repo, "dashboard/metrics.json", branch)
 
     title, one_liner = github_sync.parse_readme(readme_text)
     roi_sections = github_sync.parse_roi_md(roi_text)
@@ -371,6 +377,11 @@ def sync_automation_from_github(automation, repo_url, owner_id, form_status, sel
             AutomationTodoItem(text=t["text"], done=t["done"], order_index=i)
             for i, t in enumerate(todo_items)
         ]
+
+    if metrics_text is not None:
+        commit_sha = github_sync.fetch_head_sha(owner_gh, repo, branch)
+        warnings += metrics_sync.apply_metrics_file(automation, metrics_text, commit_sha=commit_sha,
+                                                     actor=actor, roi_md=roi_text)
 
     return automation, warnings
 
@@ -847,8 +858,11 @@ def register_routes(app):
             errors = validate_automation_form(request.form)
             if not errors:
                 automation = Automation(slug=request.form["slug"].strip(), owner_id=current_user.id)
+                roi_before = metrics_sync.roi_values(None, metrics_sync.ROI_FORM_FIELDS)
                 apply_manual_form(automation, request.form)
                 db.session.add(automation)
+                db.session.flush()
+                metrics_sync.record_roi_changes(automation, roi_before, current_user._get_current_object())
                 db.session.commit()
                 # Straight to the Stage 1 interview next, not the detail page -
                 # this is the point where answering it is cheapest (the automator
@@ -879,7 +893,9 @@ def register_routes(app):
         if request.method == "POST":
             errors = validate_automation_form(request.form, automation=automation)
             if not errors:
+                roi_before = metrics_sync.roi_values(automation.roi, metrics_sync.ROI_FORM_FIELDS)
                 apply_manual_form(automation, request.form)
+                metrics_sync.record_roi_changes(automation, roi_before, current_user._get_current_object())
                 db.session.commit()
                 return redirect(url_for("automation_detail", slug=automation.slug))
             flash("Форма містить помилки - перевір позначені поля.", "error")
@@ -904,7 +920,9 @@ def register_routes(app):
             abort(403)
         if request.method == "POST":
             automation.stage1_answers = stage1_questions.collect_answers(request.form)
+            roi_before = metrics_sync.roi_values(automation.roi, metrics_sync.ROI_STAGE1_FIELDS)
             apply_stage1_time_metrics(automation)
+            metrics_sync.record_roi_changes(automation, roi_before, current_user._get_current_object())
             db.session.commit()
             n = stage1_questions.answered_phase_count(automation.stage1_answers)
             flash(f"Відповіді Stage 1 збережено ({n}/9 фаз).", "success")
@@ -930,7 +948,8 @@ def register_routes(app):
             try:
                 automation, warnings = sync_automation_from_github(
                     existing, repo_url, owner_id,
-                    request.form.get("status") or "", request.form.getlist("departments"), slug=slug)
+                    request.form.get("status") or "", request.form.getlist("departments"), slug=slug,
+                    actor=current_user._get_current_object())
             except ValueError as e:
                 flash(str(e), "error")
                 return redirect(url_for("automation_import_github"))
@@ -964,7 +983,8 @@ def register_routes(app):
             return redirect(url_for("automation_detail", slug=slug))
         try:
             automation, warnings = sync_automation_from_github(
-                automation, repo_url, automation.owner_id, "", [])
+                automation, repo_url, automation.owner_id, "", [],
+                actor=current_user._get_current_object())
         except Exception:
             # Roll back first - a failed flush (e.g. a DB constraint error)
             # leaves the session unusable, and touching any ORM attribute
@@ -979,6 +999,31 @@ def register_routes(app):
         db.session.commit()
         flash("Оновлено з GitHub." + (" " + " ".join(warnings) if warnings else ""), "success")
         return redirect(url_for("automation_detail", slug=automation.slug))
+
+    @app.route("/automations/<slug>/metrics/<metric_key>/confirm", methods=["POST"])
+    @login_required
+    @admin_required
+    def automation_metric_confirm(slug, metric_key):
+        """Admin's verdict on one metric as of one metrics snapshot (see
+        metrics_sync.confirm_metric). No UI posts here yet - the form comes
+        with the /value redesign - but the route is real and CSRF-checked
+        like every other session POST."""
+        automation = Automation.query.filter_by(slug=slug).first_or_404()
+        # Only ever back to /value (the one page with this form), so a
+        # crafted `next` can't turn this into an open redirect.
+        next_url = request.form.get("next", "")
+        back = next_url if next_url.startswith("/value") else url_for("automation_detail", slug=slug)
+        try:
+            metrics_sync.confirm_metric(
+                automation, metric_key, request.form.get("snapshot_id", type=int),
+                request.form.get("verdict", ""), request.form.get("comment", ""),
+                current_user._get_current_object())
+        except metrics_sync.ConfirmationError as e:
+            flash(str(e), "error")
+            return redirect(back)
+        db.session.commit()
+        flash("Вердикт збережено.", "success")
+        return redirect(back)
 
     @app.route("/automations/<slug>/resync-security", methods=["POST"])
     @login_required
@@ -1845,6 +1890,25 @@ def register_cli(app):
         db.session.execute(db.text('ALTER TABLE "user" ADD COLUMN github_username VARCHAR(100)'))
         db.session.commit()
         click.echo("Migrated: added github_username column to user.")
+
+    @app.cli.command("migrate-metrics")
+    def migrate_metrics():
+        """One-off schema migration for the metrics.json sync (see models.py's
+        MetricsSnapshot/AutomationMetric/MetricMeasurement/MetricConfirmation/
+        AutomationEvent and src/metrics_sync.py). Only creates the five new
+        tables; no existing table or column is touched. Safe to run more than
+        once - each table is created with checkfirst."""
+        from .models import (AutomationEvent, AutomationMetric, MetricConfirmation,
+                             MetricMeasurement, MetricsSnapshot)
+        existing_tables = set(db.inspect(db.engine).get_table_names())
+        created = []
+        # Order matters on Postgres: the snapshot table has to exist before
+        # the tables whose foreign keys point at it.
+        for model in (MetricsSnapshot, AutomationMetric, MetricMeasurement, MetricConfirmation, AutomationEvent):
+            if model.__tablename__ not in existing_tables:
+                model.__table__.create(db.engine, checkfirst=True)
+                created.append(model.__tablename__)
+        click.echo(f"Migrated: created {', '.join(created)}." if created else "Already migrated - nothing to do.")
 
     @app.cli.command("sync-github-org")
     @click.argument("owner", required=False)

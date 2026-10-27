@@ -1,4 +1,5 @@
 import enum
+import json
 import secrets
 from datetime import datetime, timezone
 
@@ -538,3 +539,121 @@ class PendingAutomation(db.Model):
     # automation) without it reappearing on every sync run - see
     # sync-github-org's upsert logic, which never clears this flag itself.
     dismissed = db.Column(db.Boolean, nullable=False, default=False)
+
+
+# --- Structured metrics from dashboard/metrics.json (docs/metrics-contract.md).
+# All five tables below are additive: an automation that has never synced a
+# metrics.json has no rows in any of them and keeps working off ROIEntry
+# exactly as before ("старий формат"). Logic lives in src/metrics_sync.py.
+
+
+class MetricsSnapshot(db.Model):
+    """One row per sync that found a dashboard/metrics.json, valid or not -
+    never edited afterwards. The raw file is kept as fetched so a later
+    question ("what did the repo say on that day?") has a real answer, and
+    a confirmation points at the exact snapshot it was made against."""
+    id = db.Column(db.Integer, primary_key=True)
+    automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False, index=True)
+    commit_sha = db.Column(db.String(64))  # None when GitHub didn't answer the commit lookup
+    fetched_at = db.Column(db.DateTime, nullable=False, default=_now)
+    triggered_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    source = db.Column(db.String(20), nullable=False, default="github")
+    raw_json = db.Column(db.Text, nullable=False)
+    errors = db.Column(db.JSON)
+    warnings = db.Column(db.JSON)
+    is_valid = db.Column(db.Boolean, nullable=False, default=False)
+
+    triggered_by = db.relationship("User")
+
+    @property
+    def data(self):
+        """Parsed raw_json, or None for a snapshot whose file wasn't valid JSON."""
+        try:
+            return json.loads(self.raw_json)
+        except (TypeError, ValueError):
+            return None
+
+
+class AutomationMetric(db.Model):
+    """Current description of one metric, updated from each valid snapshot.
+    metric_key is the contract's stable `id`. A metric that disappears from
+    the repo is kept with is_active=False rather than deleted, so its
+    measurements and confirmations still have something to belong to."""
+    __table_args__ = (db.UniqueConstraint("automation_id", "metric_key"),)
+    id = db.Column(db.Integer, primary_key=True)
+    automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False, index=True)
+    metric_key = db.Column(db.String(120), nullable=False)
+    name = db.Column(db.String(255), nullable=False)
+    type = db.Column(db.String(20), nullable=False)
+    unit = db.Column(db.String(100), nullable=False)
+    direction = db.Column(db.String(10), nullable=False)
+    is_primary = db.Column(db.Boolean, nullable=False, default=False)
+    baseline = db.Column(db.JSON)  # {value, period, source, kind} or None
+    target = db.Column(db.JSON)    # {value, why} or None
+    method = db.Column(db.Text)
+    check_every_days = db.Column(db.Integer)
+    money = db.Column(db.JSON)     # {rate_usd_per_unit, realization, realization_why} or None
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    last_snapshot_id = db.Column(db.Integer, db.ForeignKey("metrics_snapshot.id"))
+    updated_at = db.Column(db.DateTime, default=_now, onupdate=_now)
+
+
+class MetricMeasurement(db.Model):
+    """One measurement, append-only: the key (automation, metric, date,
+    period) is written once and never updated or deleted. A repo that later
+    changes or drops a measurement leaves this row as it was and gets a
+    "замір змінено в репо" event instead."""
+    __table_args__ = (db.UniqueConstraint("automation_id", "metric_key", "date", "period"),)
+    id = db.Column(db.Integer, primary_key=True)
+    automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False, index=True)
+    metric_key = db.Column(db.String(120), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    period = db.Column(db.String(100), nullable=False)
+    value = db.Column(db.JSON)
+    source = db.Column(db.Text)
+    kind = db.Column(db.String(20), nullable=False)
+    note = db.Column(db.Text)
+    first_snapshot_id = db.Column(db.Integer, db.ForeignKey("metrics_snapshot.id"))
+    created_at = db.Column(db.DateTime, default=_now)
+
+
+class MetricConfirmation(db.Model):
+    """An admin's verdict on one metric as of one snapshot. Never edited
+    except to set invalidated_at, when a later sync brings a new measurement
+    or a changed baseline/target - that turns the metric's status into
+    "Потребує перевірки" until someone confirms again."""
+    id = db.Column(db.Integer, primary_key=True)
+    automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False, index=True)
+    metric_key = db.Column(db.String(120), nullable=False)
+    snapshot_id = db.Column(db.Integer, db.ForeignKey("metrics_snapshot.id"), nullable=False)
+    verdict = db.Column(db.String(20), nullable=False)  # confirmed | partial | rejected
+    comment = db.Column(db.Text, nullable=False)
+    confirmed_by_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    confirmed_at = db.Column(db.DateTime, nullable=False, default=_now)
+    # What the verdict was made against, so a later sync can tell whether
+    # anything it covers has changed.
+    confirmed_state = db.Column(db.JSON)
+    invalidated_at = db.Column(db.DateTime)
+    invalidated_reason = db.Column(db.Text)
+
+    confirmed_by = db.relationship("User")
+
+
+class AutomationEvent(db.Model):
+    """The one change journal for an automation: metrics syncs and their
+    effects, confirmations, and manual edits to ROI numbers that used to be
+    overwritten without a trace. actor_id is None for "github sync" with no
+    logged-in user behind it (the org-wide scan)."""
+    id = db.Column(db.Integer, primary_key=True)
+    automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=_now)
+    actor_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    actor_label = db.Column(db.String(255), nullable=False)
+    event_type = db.Column(db.String(40), nullable=False)
+    metric_key = db.Column(db.String(120))
+    field = db.Column(db.String(100))
+    old_value = db.Column(db.JSON)
+    new_value = db.Column(db.JSON)
+    commit_sha = db.Column(db.String(64))
+
+    actor = db.relationship("User")
