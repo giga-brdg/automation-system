@@ -683,8 +683,15 @@ def register_routes(app):
     def value_dashboard_page():
         dept_filter = request.args.get("department", type=int)
         owner_filter = request.args.get("owner", type=int)
+        # Default to live automations: ideas and archived ones used to land
+        # in every total. "all" is the explicit opt-out.
+        status_filter = request.args.get("status") or Status.LIVE.value
+        if status_filter != "all" and status_filter not in {s.value for s in Status}:
+            status_filter = Status.LIVE.value
 
         query = Automation.query
+        if status_filter != "all":
+            query = query.filter(Automation.status == Status(status_filter))
         if dept_filter:
             query = query.filter(Automation.departments.any(Department.id == dept_filter))
         if owner_filter:
@@ -705,9 +712,16 @@ def register_routes(app):
             owners=owners,
             active_department=dept_filter,
             active_owner=owner_filter,
+            active_status=status_filter,
+            statuses=Status,
             subscriptions=Subscription.query.order_by(Subscription.name).all(),
             target_metrics=value_dashboard.target_metrics,
             metric_pill_class=value_dashboard.METRIC_PILL_CLASS,
+            fmt_number=value_dashboard.fmt_number,
+            fmt_money=value_dashboard.fmt_money,
+            fmt_date=value_dashboard.fmt_date,
+            verdicts=metrics_sync.VERDICTS,
+            current_url=request.full_path.rstrip("?"),
         )
         return render_template("value_dashboard.html", **context)
 

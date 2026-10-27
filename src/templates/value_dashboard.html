@@ -10,11 +10,11 @@
 <form method="get" class="d-flex align-items-center gap-2 flex-wrap mb-3">
   <div class="d-flex gap-2 flex-wrap">
     <a class="btn btn-sm {{ 'btn-secondary' if not active_department else 'btn-outline-secondary' }} rounded-pill"
-       href="{{ url_for('value_dashboard_page', owner=active_owner) }}">Всі відділи</a>
+       href="{{ url_for('value_dashboard_page', owner=active_owner, status=active_status) }}">Всі відділи</a>
     {% for d in departments %}
     <a class="btn btn-sm rounded-pill dept-pill"
        style="{{ d.pill_style_active if active_department == d.id else d.pill_style }}"
-       href="{{ url_for('value_dashboard_page', department=d.id, owner=active_owner) }}">{{ d.name }}</a>
+       href="{{ url_for('value_dashboard_page', department=d.id, owner=active_owner, status=active_status) }}">{{ d.name }}</a>
     {% endfor %}
   </div>
   <select class="form-select form-select-sm" style="max-width: 220px;" name="owner" onchange="this.form.submit()">
@@ -22,6 +22,12 @@
     {% for u in owners %}
     <option value="{{ u.id }}" {% if active_owner == u.id %}selected{% endif %}>{{ u.name }}</option>
     {% endfor %}
+  </select>
+  <select class="form-select form-select-sm" style="max-width: 220px;" name="status" onchange="this.form.submit()" aria-label="Статус автоматизації">
+    {% for s in statuses %}
+    <option value="{{ s.value }}" {% if active_status == s.value %}selected{% endif %}>{{ "Запущені" if s.value == 'live' else s.label }}</option>
+    {% endfor %}
+    <option value="all" {% if active_status == 'all' %}selected{% endif %}>Усі статуси</option>
   </select>
   {% if active_department %}<input type="hidden" name="department" value="{{ active_department }}">{% endif %}
 </form>
@@ -41,29 +47,55 @@
   </div>
 </div>
 
-<div class="row row-cols-2 row-cols-md-4 g-2 mb-2">
+<div class="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-2 mb-2">
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-3 px-3">
+    <div class="card mb-0 h-100"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Всього автоматизацій</div>
       <div class="fw-bold f-22">{{ total_n }}</div>
+      {% if old_format_n %}<div class="text-muted f-11">старий формат: {{ old_format_n }}</div>{% endif %}
     </div></div>
   </div>
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-3 px-3">
+    <div class="card mb-0 h-100"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Підтверджено</div>
+      <div class="fw-bold f-22 text-success">{{ tiles.confirmed }}</div>
+      {% if partial_n %}<div class="text-muted f-11">з них частково: {{ partial_n }}</div>{% endif %}
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0 h-100"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Виміряно</div>
-      <div class="fw-bold f-22 text-success">{{ measured_n }}</div>
+      <div class="fw-bold f-22 text-primary">{{ tiles.measured }}</div>
+      {% if rejected_verdict_n %}<div class="text-muted f-11">не підтверджено: {{ rejected_verdict_n }}</div>{% endif %}
     </div></div>
   </div>
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-3 px-3">
-      <div class="text-muted f-12">Оцінка</div>
-      <div class="fw-bold f-22 text-warning">{{ estimated_n }}</div>
+    <div class="card mb-0 h-100"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Очікуємо замір</div>
+      <div class="fw-bold f-22 text-warning">{{ tiles.awaiting }}</div>
     </div></div>
   </div>
   <div class="col">
-    <div class="card mb-0"><div class="card-body py-3 px-3">
-      <div class="text-muted f-12">Ще не оцінено</div>
-      <div class="fw-bold f-22 text-muted">{{ none_n }}</div>
+    <div class="card mb-0 h-100"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Немає даних</div>
+      <div class="fw-bold f-22 text-muted">{{ tiles.no_data }}</div>
+    </div></div>
+  </div>
+  <div class="col">
+    <div class="card mb-0 h-100"><div class="card-body py-3 px-3">
+      <div class="text-muted f-12">Гроші, $/міс</div>
+      {% if has_money %}
+      <div class="fw-bold f-22">{{ fmt_money(money_total) if money_total is not none else "—" }}</div>
+      <div class="f-11 text-muted">
+        {% if money_seen.confirmed %}<div>підтверджено: {{ fmt_money(money.confirmed) }}</div>{% endif %}
+        {% if money_seen.measured %}<div>виміряно, не підтверджено: {{ fmt_money(money.measured) }}</div>{% endif %}
+        {% if money_seen.estimate %}<div>оцінка: {{ fmt_money(money.estimate) }}</div>{% endif %}
+        {% if money_seen.rejected %}<div>не підтверджено (не в сумі): {{ fmt_money(money.rejected) }}</div>{% endif %}
+      </div>
+      {% else %}
+      <div class="fw-bold f-22 text-muted">—</div>
+      <div class="f-11 text-muted">грошей ще не рахували</div>
+      {% endif %}
     </div></div>
   </div>
 </div>
@@ -99,10 +131,11 @@
   <div class="col-lg-5">
     <div class="card h-100 mb-0">
       <div class="card-body">
-        <h5 class="card-title">Виміряно vs оцінка</h5>
+        <h5 class="card-title">Є замір після запуску</h5>
         {% if confidence_pct is not none %}
         <div class="fw-bold f-28">{{ confidence_pct }}%</div>
         <div class="meter-track mt-2"><div class="meter-fill" style="width:{{ confidence_pct }}%"></div></div>
+        <div class="text-muted f-12 mt-2">{{ measured_auto_n }} з {{ total_n }} автоматизацій</div>
         {% else %}
         <div class="text-muted">—</div>
         {% endif %}
@@ -155,61 +188,257 @@
   </div>
 </div>
 
+{% set status_badge_class = {"confirmed": "bg-light-success", "measured": "bg-light-primary", "awaiting": "bg-light-warning", "no_data": "bg-light-secondary", "needs_review": "bg-light-danger"} %}
+
+{# A field with no value: say who's been asked, if anyone has. #}
+{% macro missing(e, field) -%}
+{% if e.asked.get(field) %}<span class="text-muted">не задано, питання до: {{ e.asked[field] }}</span>{% else %}<span class="text-muted">немає даних</span>{% endif %}
+{%- endmacro %}
+
+{% macro before_target_fact(e) %}
+{% if e.baseline is not none %}<span>{{ fmt_number(e.baseline) }}</span>{% else %}{{ missing(e, 'baseline') }}{% endif %} →
+{% if e.target_value is not none %}<span>{{ fmt_number(e.target_value) }}</span>{% else %}{{ missing(e, 'target') }}{% endif %} →
+{% if e.latest_measured is not none %}<span class="fw-semibold {{ {"better": "text-success", "worse": "text-danger", "same": "text-muted"}.get(e.trend, '') }}">{{ fmt_number(e.latest_measured) }}</span>{% else %}<span class="text-muted">немає даних</span>{% endif %}
+<span class="text-muted">{{ e.metric.unit }}</span>
+{% if e.latest_measured_date %}<div class="text-muted f-12">замір {{ fmt_date(e.latest_measured_date) }}</div>{% endif %}
+{% endmacro %}
+
+{% macro confirm_form(a, e, row, small=false) %}
+<form method="post" action="{{ url_for('automation_metric_confirm', slug=a.slug, metric_key=e.metric.metric_key) }}"
+      class="d-flex flex-wrap align-items-start gap-2 {{ 'mt-1' if small else 'mb-3' }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="snapshot_id" value="{{ row.snapshot_id }}">
+  <input type="hidden" name="next" value="{{ current_url }}">
+  {% if not small %}<span class="fw-semibold align-self-center">Вердикт щодо «{{ e.metric.name }}»:</span>{% endif %}
+  <select name="verdict" class="form-select form-select-sm" style="max-width: {{ 150 if small else 180 }}px;" aria-label="Вердикт">
+    {% for key, label in verdicts.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+  </select>
+  <input type="text" name="comment" class="form-control form-control-sm" style="max-width: {{ 260 if small else 360 }}px;"
+         placeholder="Коментар: на чому ґрунтується вердикт" required aria-label="Коментар">
+  <button type="submit" class="btn btn-sm {{ 'btn-outline-primary' if small else 'btn-primary' }}">Підтвердити</button>
+</form>
+{% endmacro %}
+
+{% macro metric_block(a, e, row, with_small_form=false) %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+  <span class="fw-semibold">{{ e.metric.name }}</span>
+  {% if e.type_pill %}<span class="metric-pill {{ e.type_pill }}"><span class="dot" style="background: currentColor;"></span>{{ e.type_label }}</span>{% else %}<span class="badge bg-light-secondary">{{ e.type_label }}</span>{% endif %}
+  {% if e.metric.is_primary %}<span class="badge bg-light-primary">головна</span>{% endif %}
+  <span class="badge {{ {"confirmed": "bg-light-success", "measured": "bg-light-primary", "awaiting": "bg-light-warning", "no_data": "bg-light-secondary", "needs_review": "bg-light-danger"}[e.status] }}">{{ e.label }}</span>
+  {% if e.overdue %}<span class="badge bg-light-danger">замір прострочено</span>{% endif %}
+</div>
+<div>До → Ціль → Факт: {{ before_target_fact(e) }}</div>
+
+<div class="mt-2"><span class="text-muted">Як перевіряємо:</span> {% if e.metric.method %}{{ e.metric.method }}{% else %}{{ missing(e, 'method') }}{% endif %}</div>
+<div><span class="text-muted">Як часто:</span> {% if e.metric.check_every_days %}раз на {{ e.metric.check_every_days }} дн.{% if e.next_due %}, наступний замір до {{ fmt_date(e.next_due) }}{% endif %}{% else %}{{ missing(e, 'check_every_days') }}{% endif %}</div>
+<div><span class="text-muted">До:</span>
+  {% set b = e.baseline_parts %}
+  {% if b %}
+    {{ fmt_number(b.value) }} за {{ b.period }}, {{ b.kind }}, джерело: <span title="{{ b.source_full }}">{{ b.source }}</span>
+    {% if b.source_tech %}<div class="text-muted f-11">{{ b.source_tech }}</div>{% endif %}
+  {% else %}{{ missing(e, 'baseline') }}{% endif %}
+</div>
+{% if e.metric.target and e.metric.target.why %}<div><span class="text-muted">Чому така ціль:</span> {{ e.metric.target.why }}</div>{% endif %}
+
+<div class="mt-2 text-muted">Історія замірів</div>
+{% if e.history %}
+<div class="table-responsive">
+  <table class="table table-sm mb-1 f-12">
+    <thead><tr>{% for h in ("Дата", "Період", "Значення", "Джерело", "Замір чи оцінка", "Примітка") %}<th style="white-space: normal;">{{ h }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for m in e.history %}
+      <tr>
+        <td style="white-space: normal;">{{ m.date_text }}</td>
+        <td style="white-space: normal;">{{ m.period_text }}</td>
+        <td style="white-space: normal;">{{ m.value_text }}</td>
+        <td style="white-space: normal;" title="{{ m.source or '' }}">{{ m.source_text }}{% if m.source_tech %}<div class="text-muted f-11">{{ m.source_tech }}</div>{% endif %}</td>
+        <td style="white-space: normal;">{{ "замір" if m.kind == 'measured' else "оцінка" }}</td>
+        <td style="white-space: normal;">{{ m.note or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="text-muted">замірів ще немає</div>
+{% endif %}
+
+<div class="mt-2"><span class="text-muted">Гроші:</span>
+  {% if e.money_measured_words or e.money_estimate_words %}
+    {% if e.money_measured_words %}<div>Факт: {{ e.money_measured_words }}</div>{% endif %}
+    {% if e.money_estimate_words %}<div>Оцінка: {{ e.money_estimate_words }}</div>{% endif %}
+  {% elif e.metric.money %}
+    рахуються, щойно буде замір після запуску і число «до»
+  {% elif e.asked.get('money') %}
+    {{ missing(e, 'money') }}
+  {% else %}
+    не рахуємо
+  {% endif %}
+</div>
+
+<div class="mt-2"><span class="text-muted">Підтвердження:</span>
+  {% if e.confirmation %}
+    {{ e.confirmation.verdict_label }}, {{ e.confirmation.who }}, {{ fmt_date(e.confirmation.when) }}: {{ e.confirmation.comment }}
+    {% if e.confirmation.reset_reason %}<span class="badge bg-light-danger">скинуто: {{ e.confirmation.reset_reason }}</span>{% endif %}
+  {% else %}
+    ще не підтверджували
+  {% endif %}
+</div>
+{% if with_small_form and current_user.is_admin and row.snapshot_id %}{{ confirm_form(a, e, row, small=true) }}{% endif %}
+{% endmacro %}
+
 <div class="card mb-3">
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">
       <thead>
         <tr>
           <th>Автоматизація</th>
-          <th>Метрики</th>
-          <th>Статус ROI</th>
-          <th>Значення</th>
+          <th>Головна метрика</th>
+          <th>До → Ціль → Факт</th>
+          <th>Статус</th>
           <th>Витрати часу</th>
         </tr>
       </thead>
       <tbody>
-        {% if automations %}
-        {% for a in automations %}
-        {% set metrics = target_metrics(a) %}
+        {% if rows %}
+        {% for row in rows %}
+        {% set a = row.automation %}
+        {% set p = row.primary %}
+        {# A row whose only metrics file was rejected has nothing of its own
+           to show yet: one badge says why, the details say what to do. #}
+        {% set rejected_only = row.rejected and row.format == 'old' and not a.roi %}
         <tr>
           <td>
             <a class="text-body text-decoration-none fw-semibold" href="{{ url_for('automation_detail', slug=a.slug) }}">{{ a.name }}</a>
             <div class="text-muted f-12">{{ a.departments[0].name if a.departments else "" }}{% if a.departments and a.owner %} · {% endif %}{{ a.owner.name if a.owner }}</div>
           </td>
-          <td>
-            {% if metrics %}
+          {# Metric names and status badges run longer than the old pills and
+             labels did; let these cells wrap so the table fits its card
+             (the theme sets nowrap on every .table cell). #}
+          <td style="white-space: normal; min-width: 160px;">
+            {% if p %}
+              <div class="fw-semibold f-13">{{ p.metric.name }}</div>
+              <div class="text-muted f-12">{{ p.metric.unit }}</div>
+            {% elif row.format == 'metrics' or rejected_only %}
+              <span class="text-muted f-13">—</span>
+            {% else %}
+              {% set old_metrics = target_metrics(a) %}
+              {% if old_metrics %}
+              <div class="d-flex flex-wrap gap-1">
+                {% for m in old_metrics %}
+                <span class="metric-pill {{ metric_pill_class[m] }}"><span class="dot" style="background: currentColor;"></span>{{ ({"time_saved": "Час", "conversion": "Конверсія", "quality": "Якість", "cost": "Витрати"})[m] }}</span>
+                {% endfor %}
+              </div>
+              {% else %}
+              <span class="badge bg-light-secondary">Невідомо</span>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td class="f-13" style="white-space: normal; min-width: 150px;">
+            {% if p %}
+              {{ before_target_fact(p) }}
+            {% elif row.format == 'old' and a.roi and (a.roi.best_hours_saved_per_month is not none or a.roi.measured_value) %}
+              {% if a.roi.best_hours_saved_per_month is not none %}<div>{{ "%.1f"|format(a.roi.best_hours_saved_per_month) }} год/міс</div>{% endif %}
+              {% if a.roi.measured_value %}<div class="{{ 'text-muted f-12' if a.roi.best_hours_saved_per_month is not none else '' }}">{{ a.roi.measured_value }}</div>{% endif %}
+            {% else %}
+              <span class="text-muted">немає даних</span>
+            {% endif %}
+          </td>
+          <td style="white-space: normal; min-width: 140px;">
             <div class="d-flex flex-wrap gap-1">
-              {% for m in metrics %}
-              <span class="metric-pill {{ metric_pill_class[m] }}"><span class="dot" style="background: currentColor;"></span>{{ ({"time_saved": "Час", "conversion": "Конверсія", "quality": "Якість", "cost": "Витрати"})[m] }}</span>
-              {% endfor %}
-            </div>
-            {% else %}
-            <span class="badge bg-light-secondary">Невідомо</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if a.roi %}
-              <span class="badge {{ 'bg-light-success' if a.roi.confidence == 'measured' else 'bg-light-warning' }}">{{ "Виміряно" if a.roi.confidence == 'measured' else "Оцінка" }}</span>
-            {% else %}
+            {% if rejected_only %}
+            {% elif p %}
+              <span class="badge {{ status_badge_class[p.status] }}">{{ p.label }}</span>
+              {% if p.confirmation %}<span class="badge bg-light-secondary">{{ p.confirmation.who }}: {{ p.confirmation.verdict_label|lower }}</span>{% endif %}
+              {% if p.overdue %}<span class="badge bg-light-danger">замір прострочено</span>{% endif %}
+            {% elif row.format == 'old' %}
+              {% if a.roi %}
+              <span class="badge {{ 'bg-light-primary' if row.tile == 'measured' else ('bg-light-warning' if row.tile == 'awaiting' else 'bg-light-secondary') }}">{{ {"measured": "Виміряно", "awaiting": "Оцінка", "no_data": "Немає даних"}[row.tile] }}</span>
+              {% else %}
               <span class="badge bg-light-secondary">Немає ROI</span>
+              {% endif %}
+              {% if not row.rejected %}<span class="badge bg-light-secondary">старий формат</span>{% endif %}
+            {% else %}
+              <span class="badge bg-light-secondary">Немає даних</span>
             {% endif %}
-          </td>
-          <td class="f-13">
-            {% if a.roi and a.roi.best_hours_saved_per_month is not none %}
-            <div>{{ "%.1f"|format(a.roi.best_hours_saved_per_month) }} год/міс</div>
-            {% endif %}
-            {% if a.roi and a.roi.measured_value %}
-            <div class="{{ 'text-muted f-12' if a.roi.best_hours_saved_per_month is not none else '' }}">{{ a.roi.measured_value }}</div>
-            {% endif %}
-            {% if not a.roi or (a.roi.best_hours_saved_per_month is none and not a.roi.measured_value) %}—{% endif %}
+            {% if row.rejected %}<span class="badge bg-light-danger">файл метрик відхилено ({{ row.rejected.errors|length }} помилок)</span>{% endif %}
+            </div>
           </td>
           <td class="f-13 text-muted">
             {% if a.roi and (a.roi.dev_hours is not none or a.roi.maintenance_hours_per_month is not none) %}
-              {{ a.roi.dev_hours ~ "г" if a.roi.dev_hours is not none else "—" }} /
-              {{ a.roi.maintenance_hours_per_month ~ "г/міс" if a.roi.maintenance_hours_per_month is not none else "—" }}
+              {{ fmt_number(a.roi.dev_hours) ~ " г" if a.roi.dev_hours is not none else "—" }} /
+              {{ fmt_number(a.roi.maintenance_hours_per_month) ~ " г/міс" if a.roi.maintenance_hours_per_month is not none else "—" }}
             {% else %}—{% endif %}
           </td>
         </tr>
+        {% if row.format == 'metrics' or row.rejected or row.events %}
+        <tr>
+          {# The theme sets white-space: nowrap on every .table cell (nested
+             ones too), so this row and its history table opt back into
+             wrapping; otherwise the long method/source prose would stretch
+             the whole table past the card. #}
+          <td colspan="5" class="pt-0 border-top-0" style="white-space: normal;">
+            {# On a phone the table scrolls sideways inside its card; keep the
+               details pinned to the visible width so they read without that. #}
+            <div style="position: sticky; left: 0; max-width: calc(100vw - 3rem);">
+            <details>
+              <summary class="text-primary f-13" style="cursor:pointer;">Деталі{% if row.metrics %}: {{ row.metrics|length }} метрик{% if row.open_questions %}, {{ row.open_questions|length }} відкритих питань{% endif %}{% elif row.rejected %}: чому відхилено файл метрик{% endif %}</summary>
+              <div class="mt-2 f-13">
+
+                {% if row.rejected %}
+                <div class="mb-3">
+                  <div class="fw-semibold text-danger">Останній синк файлу метрик відхилено{% if row.rejected.when %} ({{ fmt_date(row.rejected.when) }}){% endif %}</div>
+                  <div class="text-muted f-12">{% if row.format == 'metrics' %}Нижче дані останнього прийнятого знімка.{% else %}Прийнятих даних ще не було.{% endif %}</div>
+                  <ul class="mb-1 mt-1">
+                    {% for err in row.rejected.human_errors %}<li title="{{ row.rejected.errors[loop.index0] }}">{{ err }}</li>{% endfor %}
+                  </ul>
+                  <div>{{ row.rejected.hint }}</div>
+                </div>
+                {% endif %}
+
+                {% if p %}
+                {% if current_user.is_admin and row.snapshot_id %}{{ confirm_form(a, p, row) }}{% endif %}
+                <div class="mb-3 pb-2 border-bottom">{{ metric_block(a, p, row) }}</div>
+                {% endif %}
+
+                {% if row.others %}
+                <details class="mb-3">
+                  <summary class="text-primary" style="cursor:pointer;">Інші метрики ({{ row.others|length }})</summary>
+                  <div class="mt-2">
+                    {% for e in row.others %}
+                    <div class="mb-3 pb-2 {{ 'border-bottom' if not loop.last }}">{{ metric_block(a, e, row, with_small_form=true) }}</div>
+                    {% endfor %}
+                  </div>
+                </details>
+                {% endif %}
+
+                {% if row.open_questions %}
+                <div class="mb-3">
+                  <div class="text-muted">Відкриті питання</div>
+                  <ul class="mb-0">
+                    {% for q in row.open_questions %}
+                    <li>{{ q.metric_name }}, «{{ q.field_label }}»: {{ q.question }} (питати: {{ q.ask_whom_label }}, з {{ q.since_text }})</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+
+                {% if row.events %}
+                <div>
+                  <div class="text-muted">Останні події</div>
+                  <ul class="mb-0">
+                    {% for ev in row.events %}
+                    <li>{{ ev.when.strftime('%d.%m.%Y %H:%M') }}, {{ ev.who }}: {{ ev.text }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% endif %}
+              </div>
+            </details>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
         {% else %}
         <tr><td colspan="5" class="text-center text-muted py-4">Немає автоматизацій за цим фільтром.</td></tr>

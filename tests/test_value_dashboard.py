@@ -5,7 +5,7 @@ all (pre-dates this feature, or just hasn't run it yet) doesn't error."""
 import re
 
 from src.extensions import db
-from src.models import Automation, Department, ROIEntry, Role, Subscription, User
+from src.models import Automation, Department, ROIEntry, Role, Status, Subscription, User
 from src.value_dashboard import build_context, target_metrics
 
 
@@ -73,19 +73,23 @@ class TestBuildContext:
             assert ctx["saved_measured"] == 5
             assert ctx["saved_estimated"] == 4
 
-    def test_confidence_pct_only_counts_automations_with_roi(self, app):
+    def test_old_format_measured_means_a_number_not_the_label(self, app):
+        """Old-format cards: "Виміряно" needs a real measured_hours_per_month.
+        A bare confidence="measured" label used to count (01_current_value_page.md
+        section 3.9); now it doesn't."""
         with app.app_context():
             owner = _make_user("o@x.com", "O")
             a1 = Automation(slug="a1", name="A1", owner_id=owner.id, roi=ROIEntry(confidence="measured"))
-            a2 = Automation(slug="a2", name="A2", owner_id=owner.id, roi=ROIEntry(confidence="estimated"))
+            a2 = Automation(slug="a2", name="A2", owner_id=owner.id,
+                            roi=ROIEntry(confidence="estimated", measured_hours_per_month=5))
             a3 = Automation(slug="a3", name="A3", owner_id=owner.id)  # no roi at all
             db.session.add_all([a1, a2, a3])
             db.session.commit()
             ctx = build_context([a1, a2, a3])
-            assert ctx["measured_n"] == 1
-            assert ctx["estimated_n"] == 1
-            assert ctx["none_n"] == 1
-            assert ctx["confidence_pct"] == 50  # 1 of 2 *with* an roi entry, not 1 of 3
+            assert ctx["tiles"]["measured"] == 1
+            assert ctx["tiles"]["no_data"] == 2
+            assert ctx["old_format_n"] == 3
+            assert ctx["confidence_pct"] == 33  # 1 of all 3 in the selection
 
     def test_dev_hours_excluded_from_net_hours(self, app):
         with app.app_context():
@@ -139,7 +143,7 @@ class TestValueDashboardRoute:
         """Pre-dates the feature entirely - must render as an honest gap, not error."""
         with app.app_context():
             user = _make_user("a@x.com", "A")
-            db.session.add(Automation(slug="thing", name="Thing", owner_id=user.id))
+            db.session.add(Automation(slug="thing", name="Thing", owner_id=user.id, status=Status.LIVE))
             db.session.commit()
         _login(client, "a@x.com")
         resp = client.get("/value")
@@ -152,8 +156,8 @@ class TestValueDashboardRoute:
             user = _make_user("a@x.com", "A")
             sales = Department(name="Sales", hue=10)
             hr = Department(name="HR", hue=20)
-            a1 = Automation(slug="a1", name="A1", owner_id=user.id, departments=[sales])
-            a2 = Automation(slug="a2", name="A2", owner_id=user.id, departments=[hr])
+            a1 = Automation(slug="a1", name="A1", owner_id=user.id, departments=[sales], status=Status.LIVE)
+            a2 = Automation(slug="a2", name="A2", owner_id=user.id, departments=[hr], status=Status.LIVE)
             db.session.add_all([sales, hr, a1, a2])
             db.session.commit()
             sales_id = sales.id
@@ -168,8 +172,8 @@ class TestValueDashboardRoute:
         with app.app_context():
             u1 = _make_user("u1@x.com", "Owner One")
             u2 = _make_user("u2@x.com", "Owner Two")
-            db.session.add(Automation(slug="a1", name="A1", owner_id=u1.id))
-            db.session.add(Automation(slug="a2", name="A2", owner_id=u2.id))
+            db.session.add(Automation(slug="a1", name="A1", owner_id=u1.id, status=Status.LIVE))
+            db.session.add(Automation(slug="a2", name="A2", owner_id=u2.id, status=Status.LIVE))
             db.session.commit()
             u1_id = u1.id
         _login(client, "u1@x.com")
