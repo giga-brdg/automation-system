@@ -32,11 +32,9 @@ command lives in Railway's project settings, not in git:
 - **Stack**: Python/Flask (`Flask`, `Flask-SQLAlchemy`, `Flask-Login` — not the
   Node/Next.js stack `PIPELINE.md` Phase 2 records; that phase is stale, the
   shipped code is Flask). Entry point is `src/app.py`'s module-level `app =
-  create_app()`. `gunicorn` is pinned in `requirements.txt`, which is consistent
-  with it being the WSGI server, but since (as just noted) the real start command
-  lives in Railway's project settings and not in git, this repo cannot actually
-  confirm gunicorn is what Railway invokes — a pinned dependency proves it's
-  installed, not that it's on the command line running in prod. No Python version
+  create_app()`. The start command lives in Railway's service settings, not in
+  git; checked 2026-10-27 it is `gunicorn -w 2 -b 0.0.0.0:$PORT src.app:app`,
+  with no pre-deploy command (so nothing runs migrations on deploy). No Python version
   is pinned anywhere either (no `runtime.txt`, `.python-version`, or Railway/
   Nixpacks config), so a from-scratch deploy gets whatever Python version
   Railway's build system currently defaults to, which may not match what this
@@ -57,32 +55,28 @@ command lives in Railway's project settings, not in git:
   the second failure mode (concurrent writers to divergent local files). There is
   also no migration framework (no Alembic/Flask-Migrate): schema is created/
   updated by hand via custom Flask CLI commands in `src/app.py` (`flask init-db`
-  for a fresh DB; `flask migrate-registration`, `flask migrate-skill-repo-url`,
-  `flask migrate-token-usage`, `flask migrate-confirm-attempts`, `flask
-  migrate-stage0-answers`, and `flask migrate-security-review` for feature-specific
-  columns added since — the
-  `/confirm` one, for its brute-force lockout, has **not yet been run against
-  the production database** as of this writing, see `SECURITY.md`'s Known
-  Limitations for what breaks until it is. `flask migrate-rename-stage0-to-stage1`
-  (renames `automation.stage0_answers` to `stage1_answers` and the `stage-0-supplax`
-  skill row to `stage-1-supplax`, now that the skill itself is Stage 1), `flask
-  migrate-roi-time-metrics` (adds `roi_entry`'s five structured time-metric columns —
-  `baseline_cycle_minutes`/`baseline_frequency_per_month`/`target_cycle_minutes`/
-  `target_frequency_per_month`/`measured_hours_per_month`, see `models.py`'s
-  `ROIEntry`), and `flask migrate-cost-metrics` (adds `roi_entry`'s `dev_hours`/
-  `maintenance_hours_per_month` columns and creates the new `subscription`/
-  `automation_subscriptions` tables via `db.create_all()`, see models.py's
-  `Subscription`), and `flask migrate-github-username` (adds `user.github_username`,
-  the login the org scan matches a repo's top contributor against so a
-  newly-found repo lands on whoever writes it — until it runs, every
-  discovered automation falls back to `AUTOMATION_SYNC_OWNER_EMAIL`) have
-  **also not yet been run against production** as of this writing).
+  for a fresh DB; one `flask migrate-*` command per later schema change, each
+  safe to re-run, see `register_cli` in `src/app.py`). **Prod state, checked
+  2026-10-27** by comparing the live Postgres schema with `models.py` over a
+  read-only connection: every `migrate-*` up to and including
+  `migrate-github-username` has been applied (registration, confirm-attempts,
+  skill-repo-url, token-usage, stage0-answers, rename-stage0-to-stage1,
+  roi-time-metrics, cost-metrics, security-review, pending-automations,
+  github-username). `automation` also still carries four columns the model no
+  longer has (`current_stage_override`, `last_commit_at`, `last_commit_message`,
+  `last_synced_at`); they are nullable leftovers and harmless.
   `flask migrate-metrics` creates the five new metrics tables (`metrics_snapshot`,
   `automation_metric`, `metric_measurement`, `metric_confirmation`,
   `automation_event`) and touches nothing existing. Run it before deploying the
   code that uses them: until it runs, saving the card or Stage 1 form and syncing a
   repo that has `dashboard/metrics.json` fail, because each writes to
   `automation_event`. Viewing pages and login don't touch these tables.
+  Catch for the first rollout: the running (old) code doesn't have the
+  `migrate-metrics` command yet, so before that push the same tables are
+  created by SQL compiled from the same models (`CreateTable` for the
+  `postgresql` dialect), run in one transaction over `railway ssh --service web`.
+  Once the code is live, `flask --app src.app migrate-metrics` should answer
+  "Already migrated".
   A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without
@@ -91,16 +85,15 @@ command lives in Railway's project settings, not in git:
   the prod DB manually to have effect there — that's this doc's own
   characterization of what "run against prod" means, not a phrase used
   anywhere else in the repo (`README.md` documents all three purely as
-  local-dev setup steps and never frames them as prod commands at all) — and
-  this repo does not say *how* to actually reach the prod DB to run them;
-  there's no
-  documented `railway run`/shell/SSH mechanism for executing a one-off command
-  against the deployed service. `create-user` specifically prompts interactively
+  local-dev setup steps and never frames them as prod commands at all). The
+  working path is SSH into the running `web` container, which already has the
+  app and the private-network `DATABASE_URL`:
+  `railway ssh --service web -- flask --app src.app migrate-<name>` (a local
+  `railway run` can't reach the DB, its host is on Railway's private network).
+  `create-user` specifically prompts interactively
   for a hidden, confirmed password (`click.prompt(..., hide_input=True,
-  confirmation_prompt=True)`), which needs a real TTY attached to the remote
-  process — a plain `railway run flask ... create-user ...` from a local
-  terminal is the likely path, but that's an assumption, not something this repo
-  documents. One more thing this step produces that whoever runs it needs to
+  confirmation_prompt=True)`), so run it from an interactive `railway ssh
+  --service web` session, not as a one-shot command. One more thing this step produces that whoever runs it needs to
   handle deliberately: `create-user`'s success output is
   `click.echo(f"Created ... (api_key: {user.api_key})")` — it prints the new
   admin's `api_key` in plain text. `README.md` already flags this key as
@@ -166,26 +159,23 @@ command lives in Railway's project settings, not in git:
   the reference variables above since `web` doesn't otherwise need to know
   the org name.
 - **Still genuinely undecided / undocumented**: a real IaC setup for
-  `infra/staging`/`infra/prod`; the actual deploy trigger (push-to-`main`
-  auto-deploy via Railway's GitHub integration vs. `railway up` vs. a manual
-  dashboard click — nothing in this repo says which, see the Rollout Strategy
-  hedge below); which Python version Railway's build actually resolves to
+  `infra/staging`/`infra/prod`; which Python version Railway's build actually resolves to
   (`RAILPACK_PYTHON_VERSION` is set on the live service, but that's a Railway
   project setting, not something pinned in this repo's own files — a
-  from-scratch deploy elsewhere still has nothing here to pin it); whether
-  `gunicorn` (pinned in `requirements.txt`) is actually what Railway invokes
-  as the start command, as opposed to just being installed (Stack bullet
-  above). (One thing that's *not* undecided, just unbuilt: there is no CI
+  from-scratch deploy elsewhere still has nothing here to pin it). The deploy
+  trigger is no longer open: `web`'s source is the GitHub repo
+  `giga-brdg/automation-system`, branch `main`, and every push to `main` gets
+  its own deployment (checked 2026-10-27 against the deployment history), so
+  a push is a deploy. (One thing that's *not* undecided, just unbuilt: there is no CI
   step ahead of a deploy, confirmed by `PIPELINE.md` §7 — a real test command
   now exists (`pytest`, see `TESTING.md`), but nothing runs it automatically,
   so a deploy today is still not blocked on tests passing. That's a settled
   fact about the current state, not an open question.)
 
 ## Rollout Strategy
-Assumed direct deploy: whatever the actual trigger turns out to be (see "still
-undecided" above — this repo doesn't confirm push-to-`main` vs. `railway up` vs.
-a manual dashboard click), there's no canary/blue-green step in between — for
-the web app, it's just one new Railway deployment replacing the running one.
+Direct deploy: a push to `main` triggers it (see Deploy Steps), and there's no
+canary/blue-green step in between. For the web app, it's just one new Railway
+deployment replacing the running one.
 That framing covers only the web process, though: Deploy Steps above can't
 confirm whether `telegram_bot.py` runs as its own second Railway service, a
 worker process, or isn't running at all, so if it does run as a separate
@@ -213,8 +203,10 @@ style CLI commands above, not through a reversible migration tool, so reverting 
 commit that introduced a schema change does not undo it in the running database
 (Postgres or SQLite, whichever prod actually is — see Deploy Steps). A rollback
 that involves a schema change needs a manual, matching
-down-step; no backup process is documented anywhere in this repo yet, so there's
-currently no fallback if that manual step goes wrong.
+down-step. As of 2026-10-27 the `Postgres` service's volume has **no backups and
+no backup schedule** on Railway, so take one by hand before any schema change:
+a logical dump (`pg_dump`, available inside the `Postgres` service's container)
+saved off Railway, and/or a volume backup from the service's Backups tab.
 
 It also does not cover Railway project/service settings (start command, env
 vars set in the dashboard, etc.) — as noted in Deploy Steps, those live outside
