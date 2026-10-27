@@ -27,8 +27,9 @@ Sass with this app's brand colors.
 ## Deploy Steps
 Currently deployed to Railway (PaaS). This is the practice as it actually happened,
 reconstructed from the repo, not a pipeline anyone documented before building it —
-there is no Railway config file or `Procfile` in this repo, so the real start
-command lives in Railway's project settings, not in git:
+the only Railway config in this repo is `railway.json`'s healthcheck (see "Before
+deploy: dependencies"), so the real start command lives in Railway's project
+settings, not in git:
 - **Stack**: Python/Flask (`Flask`, `Flask-SQLAlchemy`, `Flask-Login` — not the
   Node/Next.js stack `PIPELINE.md` Phase 2 records; that phase is stale, the
   shipped code is Flask). Entry point is `src/app.py`'s module-level `app =
@@ -203,10 +204,14 @@ style CLI commands above, not through a reversible migration tool, so reverting 
 commit that introduced a schema change does not undo it in the running database
 (Postgres or SQLite, whichever prod actually is — see Deploy Steps). A rollback
 that involves a schema change needs a manual, matching
-down-step. As of 2026-10-27 the `Postgres` service's volume has **no backups and
-no backup schedule** on Railway, so take one by hand before any schema change:
-a logical dump (`pg_dump`, available inside the `Postgres` service's container)
-saved off Railway, and/or a volume backup from the service's Backups tab.
+down-step. The `Postgres` service's volume has **no backup schedule** on Railway,
+so take one by hand before any schema change: a logical dump (`pg_dump`,
+available inside the `Postgres` service's container) saved off Railway, and/or a
+volume backup from the service's Backups tab. The last one, taken right before
+`migrate-metrics` on 2026-10-27, exists in both forms: volume backup
+`pre-metrics-2026-10-27` on Railway and `pg_dump -Fc` at
+`D:\backups\automation-dashboard\pre-metrics-2026-10-27.dump` on the
+maintainer's machine.
 
 It also does not cover Railway project/service settings (start command, env
 vars set in the dashboard, etc.) — as noted in Deploy Steps, those live outside
@@ -214,10 +219,24 @@ git entirely. If a bad deploy was actually caused by a settings change rather
 than a code change, `git revert` has nothing to revert; whoever changed the
 setting has to change it back by hand.
 
+## Before deploy: dependencies
+On 2026-10-27 a deploy went down on boot with `ModuleNotFoundError: psycopg`:
+SQLAlchemy came in unpinned through Flask-SQLAlchemy, the fresh build resolved
+2.1, which maps `postgresql://` to psycopg v3 (only `psycopg2-binary` is
+installed), and with no healthcheck Railway marked the crashing deployment
+SUCCESS and retired the working one. `requirements.txt` now pins SQLAlchemy,
+Werkzeug and click, and `railway.json` sets `healthcheckPath: /login`, so a
+deployment that can't serve `/login` within 100 s never takes traffic. When
+`requirements.txt` changes, check it the way Railway builds it before pushing:
+a fresh Python 3.12 venv, `pip install --no-cache-dir -r requirements.txt`,
+then `create_engine('postgresql://u:x@localhost/db').dialect.dbapi` must import,
+`create_app()` with `DATABASE_URL` pointing at an unreachable host must start,
+and its first query must fail with `OperationalError` (not an import error),
+and `pytest` must pass.
+
 ## Post-Deploy Verification
-No automated health checks or monitoring exist yet (see `OBSERVABILITY.md`) — and
-this is now a real gap, not a bootstrap-time placeholder overtaken by later code:
-the app is live in prod without one. Until one exists, verify a deploy manually:
+Railway's only automated check is the `/login` healthcheck above; there's no
+monitoring beyond it (see `OBSERVABILITY.md`), so also verify a deploy manually:
 confirm `/login` responds, confirm `telegram_bot.py` is running and an admin
 `/grant <email> <role>` command still gets a response in Telegram, check the
 app's Railway logs for startup errors, and — because both fail silently rather
