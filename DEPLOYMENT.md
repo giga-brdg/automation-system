@@ -77,6 +77,12 @@ command lives in Railway's project settings, not in git:
   newly-found repo lands on whoever writes it — until it runs, every
   discovered automation falls back to `AUTOMATION_SYNC_OWNER_EMAIL`) have
   **also not yet been run against production** as of this writing).
+  `flask migrate-metrics` creates the five new metrics tables (`metrics_snapshot`,
+  `automation_metric`, `metric_measurement`, `metric_confirmation`,
+  `automation_event`) and touches nothing existing. Run it before deploying the
+  code that uses them: until it runs, saving the card or Stage 1 form and syncing a
+  repo that has `dashboard/metrics.json` fail, because each writes to
+  `automation_event`. Viewing pages and login don't touch these tables.
   A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without

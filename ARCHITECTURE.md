@@ -126,6 +126,17 @@ badge variant name that templates combine with that stylesheet's classes).
   `ROIEntry`, `AutomationPage`, `Connection`, `AutomationTodoItem`, and
   `ReviewLogEntry` rows, with specific clear-vs-preserve rules per file (e.g. an empty
   `## Pages` section only clears stale pages when `SUMMARY.md` was actually fetched).
+  It also fetches the optional `dashboard/metrics.json` (contract:
+  `docs/metrics-contract.md`). Without it nothing changes ("старий формат"). With it,
+  `src/metrics_contract.py` validates the file (same rules as stage-1-supplax's
+  `check_metrics.py`) and `src/metrics_sync.py` stores an immutable `MetricsSnapshot`
+  (raw JSON, commit sha, who, errors) on every sync. Only a valid file updates
+  `AutomationMetric` and appends `MetricMeasurement` rows. Measurements are never
+  updated or deleted; one the repo later changed or dropped is kept and journaled.
+  Every change, plus admin confirmations (`MetricConfirmation`) and manual edits of
+  ROI numbers in the card and Stage 1 forms, goes to one `AutomationEvent` journal.
+  `metrics_sync.compute_status` is the single place a metric's status, overdue flag,
+  result and money are worked out.
   `dashboard/SECURITY_REVIEW.md` is a record of the last time someone ran Claude Code's
   built-in `/security-review` command against the repo (diff-scoped, not a full-codebase
   audit) — its absence sets `security_review_at` to `None`, which `security_review_state`
