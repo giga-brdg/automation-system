@@ -719,6 +719,7 @@ def register_routes(app):
             metric_pill_class=value_dashboard.METRIC_PILL_CLASS,
             fmt_number=value_dashboard.fmt_number,
             fmt_money=value_dashboard.fmt_money,
+            fmt_usd=value_dashboard.fmt_usd,
             fmt_date=value_dashboard.fmt_date,
             verdicts=metrics_sync.VERDICTS,
             current_url=request.full_path.rstrip("?"),
@@ -1037,6 +1038,28 @@ def register_routes(app):
             return redirect(back)
         db.session.commit()
         flash("Вердикт збережено.", "success")
+        return redirect(back)
+
+    @app.route("/automations/<slug>/value/<item_id>/confirm", methods=["POST"])
+    @login_required
+    @admin_required
+    def automation_value_item_confirm(slug, item_id):
+        """Admin's verdict on one value item (metrics_sync.confirm_value_item),
+        posted from /value's value-items table. CSRF-checked like every other
+        session POST; always lands back on /value."""
+        automation = Automation.query.filter_by(slug=slug).first_or_404()
+        next_url = request.form.get("next", "")
+        back = next_url if next_url.startswith("/value") else url_for("value_dashboard_page")
+        try:
+            metrics_sync.confirm_value_item(
+                automation, item_id, request.form.get("snapshot_id", type=int),
+                request.form.get("verdict", ""), request.form.get("comment", ""),
+                current_user._get_current_object())
+        except metrics_sync.ConfirmationError as e:
+            flash(str(e), "error")
+            return redirect(back)
+        db.session.commit()
+        flash("Вердикт по статті збережено.", "success")
         return redirect(back)
 
     @app.route("/automations/<slug>/resync-security", methods=["POST"])
@@ -1919,6 +1942,21 @@ def register_cli(app):
         # Order matters on Postgres: the snapshot table has to exist before
         # the tables whose foreign keys point at it.
         for model in (MetricsSnapshot, AutomationMetric, MetricMeasurement, MetricConfirmation, AutomationEvent):
+            if model.__tablename__ not in existing_tables:
+                model.__table__.create(db.engine, checkfirst=True)
+                created.append(model.__tablename__)
+        click.echo(f"Migrated: created {', '.join(created)}." if created else "Already migrated - nothing to do.")
+
+    @app.cli.command("migrate-value-items")
+    def migrate_value_items():
+        """One-off schema migration for contract v1.1's value items (see
+        models.py's AutomationValueItem/ValueItemConfirmation). Only creates
+        the two new tables; no existing table or column is touched, so it's
+        safe on a live database and safe to run more than once."""
+        from .models import AutomationValueItem, ValueItemConfirmation
+        existing_tables = set(db.inspect(db.engine).get_table_names())
+        created = []
+        for model in (AutomationValueItem, ValueItemConfirmation):
             if model.__tablename__ not in existing_tables:
                 model.__table__.create(db.engine, checkfirst=True)
                 created.append(model.__tablename__)

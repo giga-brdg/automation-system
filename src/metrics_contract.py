@@ -1,11 +1,15 @@
-"""Validation of an automation repo's dashboard/metrics.json against the v1
-contract (docs/metrics-contract.md). The rules and their messages mirror
+"""Validation of an automation repo's dashboard/metrics.json against the v1.1
+contract (docs/metrics-contract.md; v1.1 only adds value_items,
+OpenQuestion.value_item_id and baseline.not_applicable_why, so a v1 file
+validates as before). The rules and their messages mirror
 stage-1-supplax's scripts/check_metrics.py (the reference validator the
 automators run before pushing) so a file that passes there passes here and
 the other way round - but this module doesn't import or depend on the skill.
 
-One rule from the reference is skipped: matching metric names against
-docs/roi_explained.md's "## Метрики", since the sync never fetches that file.
+The rules that read docs/roi_explained.md are skipped - matching metric names
+against its "## Метрики", its "## Цінність" table against value_items, and
+the v1 leniency for a field explained only in its "## Caveats" - since the
+sync never fetches that file.
 The append-only rule isn't a validation error here either - the dashboard
 enforces it on its own stored measurements instead (src/metrics_sync.py),
 so a measurement changed in the repo is kept and logged, not rejected.
@@ -23,9 +27,18 @@ METRIC_KEYS = ["id", "name", "type", "unit", "direction", "primary", "baseline",
                "target", "method", "check_every_days", "measurements"]
 MEASUREMENT_KEYS = ["date", "period", "value", "source", "kind", "note"]
 OPEN_QUESTION_KEYS = ["metric_id", "field", "question", "ask_whom", "since"]
+# v1.1: category -> its Ukrainian name, in display order. revenue/cost_savings/
+# time/losses are Оксана's A/B/C/D; run_cost is what the automation itself
+# costs to run, the only negative one.
+CATEGORIES = {"revenue": "Дохід", "cost_savings": "Економія витрат", "time": "Час",
+              "losses": "Менше втрат", "run_cost": "Експлуатація"}
+BASES = {"data", "assumption"}
+VALUE_ITEM_KEYS = ["id", "category", "title", "usd_per_month", "kind", "basis",
+                   "formula", "why", "source", "as_of"]
 KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PERIOD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$")
+PERIOD_IN_TEXT_RE = re.compile(r"\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}")
 
 
 def _empty(value):
@@ -75,9 +88,10 @@ class _Report:
         self.warnings.append(msg)
 
 
-def _has_question(questions, metric_id, field):
+def _has_question(questions, metric_id, field, key="metric_id"):
+    """`key` is "value_item_id" for a question about a value item."""
     for q in questions:
-        if not isinstance(q, dict) or q.get("metric_id") != metric_id:
+        if not isinstance(q, dict) or q.get(key) != metric_id:
             continue
         asked = q.get("field")
         if isinstance(asked, str) and (field == asked or field.startswith(asked + ".")
@@ -93,8 +107,14 @@ def _check_baseline(m, label, report):
     if not isinstance(baseline, dict):
         report.error(f"{label}: baseline має бути об'єктом {{value, period, source, kind}} або null")
         return []
+    not_applicable = baseline.get("not_applicable_why")
     if _empty(baseline.get("value")):
-        return ["baseline"]
+        # v1.1: «неможливо зміряти» is answered in the JSON itself.
+        return ["baseline"] if _empty(not_applicable) else []
+    if not _empty(not_applicable):
+        report.error(f"{label}: у baseline є і значення, і not_applicable_why. Або число з "
+                     f"джерелом, або причина, чому зміряти неможливо")
+        return []
     if _empty(baseline.get("source")):
         report.error(f"{label}: у baseline є число, але не вказано джерело (source)")
     if baseline.get("kind") not in KINDS:
@@ -211,7 +231,118 @@ def _check_metric(m, index, report):
     return metric_id, m.get("name"), missing
 
 
-def _check_open_questions(questions, metric_ids, report):
+def _check_value_item(item, index, metric_ids, report):
+    """Returns (id, missing fields an OpenQuestion may stand in for)."""
+    if not isinstance(item, dict):
+        report.error(f"Стаття цінності №{index}: має бути об'єктом")
+        return None, []
+    label = f"Стаття цінності «{item.get('id') or item.get('title') or index}»"
+    absent = [k for k in VALUE_ITEM_KEYS if k not in item]
+    if absent:
+        report.error(f"{label}: бракує обов'язкових полів {', '.join(absent)} "
+                     f"(порожнє значення пишеться як null, а не пропускається)")
+
+    item_id = item.get("id")
+    if not isinstance(item_id, str) or not KEBAB_RE.match(item_id):
+        report.error(f"{label}: id має бути у kebab-case (малі латинські літери, цифри, дефіс), "
+                     f"зараз {item_id!r}")
+    category = item.get("category")
+    if category not in CATEGORIES:
+        report.error(f"{label}: category має бути однією з {', '.join(CATEGORIES)}, "
+                     f"зараз {category!r}")
+    if _empty(item.get("title")):
+        report.error(f"{label}: немає опису, що саме дає стаття (title)")
+
+    missing = []
+    usd = item.get("usd_per_month")
+    if usd is None:
+        missing.append("usd_per_month")
+    elif not is_number(usd):
+        report.error(f"{label}: usd_per_month має бути числом, зараз {usd!r}")
+    elif category == "run_cost" and usd > 0:
+        report.error(f"{label}: експлуатація (run_cost) це витрата, usd_per_month має бути "
+                     f"від'ємним або 0, зараз {usd}")
+    elif category in CATEGORIES and category != "run_cost" and usd <= 0:
+        report.error(f"{label}: для категорії {category} usd_per_month має бути більше 0, "
+                     f"зараз {usd}. Витрати на саму автоматизацію пишуться окремою статтею run_cost")
+
+    kind = item.get("kind")
+    if kind in ("confirmed", "verified", "підтверджено"):
+        report.error(f"{label}: kind {kind!r} не можна ставити в репо. «Підтверджено» ставить "
+                     f"тільки дашборд після вердикту адміністратора; тут measured або estimate")
+    elif kind not in KINDS:
+        report.error(f"{label}: kind має бути measured або estimate, зараз {kind!r}")
+    basis = item.get("basis")
+    if basis not in BASES:
+        report.error(f"{label}: basis має бути data (обсяг з даних) або assumption (припущення), "
+                     f"зараз {basis!r}")
+    if kind == "measured":
+        text = " ".join(str(item.get(k) or "") for k in ("source", "formula"))
+        if basis != "data":
+            report.error(f"{label}: measured можливий лише коли обсяг узято з даних (basis: data)")
+        if not any(_exact_period(p) for p in PERIOD_IN_TEXT_RE.findall(text)):
+            report.error(f"{label}: позначено як measured, але в source чи formula немає точного "
+                         f"періоду заміру YYYY-MM-DD..YYYY-MM-DD. Без нього це оцінка (estimate)")
+
+    for key in ("formula", "why", "source"):
+        if _empty(item.get(key)):
+            missing.append(key)
+    if "as_of" in item and parse_date(item.get("as_of")) is None:
+        report.error(f"{label}: as_of має бути датою YYYY-MM-DD, зараз {item.get('as_of')!r}")
+    linked = item.get("metric_ids")
+    if linked is not None:
+        if not isinstance(linked, list) or not all(isinstance(x, str) for x in linked):
+            report.error(f"{label}: metric_ids має бути списком id метрик або null")
+        else:
+            for metric_id in linked:
+                if metric_id not in metric_ids:
+                    report.warn(f"{label}: metric_ids посилається на метрику {metric_id!r}, "
+                                f"якої немає в metrics")
+    return item_id, missing
+
+
+def _check_value_items(items, metrics, metric_ids, report):
+    """v1.1 `value_items`. Returns [(id, missing fields)] for the OpenQuestion check."""
+    if not isinstance(items, list):
+        report.error("value_items має бути списком або відсутнім")
+        return []
+    checked = [_check_value_item(x, i, metric_ids, report) for i, x in enumerate(items, 1)]
+    ids = [c[0] for c in checked if isinstance(c[0], str)]
+    for dup in sorted({i for i in ids if ids.count(i) > 1}):
+        report.error(f"Стаття цінності: id {dup!r} повторюється. Кожна стаття має свій унікальний id")
+    if items:
+        for m in metrics:
+            if isinstance(m, dict) and m.get("money") is not None:
+                report.error(f"Метрика «{m.get('name') or m.get('id')}»: є money, а гроші вже "
+                             f"розкладені у value_items. Гроші рахуємо в одному місці: коли є "
+                             f"value_items, money у метриках має бути null")
+    return checked
+
+
+def _usd(value):
+    sign = "-" if value < 0 else ""
+    return f"{sign}${abs(round(value)):,}".replace(",", " ")
+
+
+def value_summary(data):
+    """The two lines dashboard/ROI.md's "## Actual Results" starts with when
+    there are value_items, or None - same as the skill's value_summary()."""
+    items = [x for x in (data.get("value_items") or []) if isinstance(x, dict)
+             and is_number(x.get("usd_per_month"))] if isinstance(data, dict) else []
+    if not items:
+        return None
+    measured = sum(x["usd_per_month"] for x in items if x.get("kind") == "measured")
+    estimate = sum(x["usd_per_month"] for x in items if x.get("kind") != "measured")
+    per_category = []
+    for code, name in CATEGORIES.items():
+        values = [x["usd_per_month"] for x in items if x.get("category") == code]
+        if values:
+            per_category.append(f"{name} {_usd(sum(values))}")
+    return (f"Заміряно {_usd(measured)}/міс, оцінка {_usd(estimate)}/міс",
+            "За категоріями: " + ", ".join(per_category))
+
+
+def _check_open_questions(questions, metric_ids, report, value_item_ids=frozenset()):
     if not isinstance(questions, list):
         report.error("open_questions має бути списком (може бути порожнім [])")
         return []
@@ -229,8 +360,14 @@ def _check_open_questions(questions, metric_ids, report):
         if "since" in q and parse_date(q.get("since")) is None:
             report.error(f"{where}: since має бути датою YYYY-MM-DD, зараз {q.get('since')!r}")
         metric_id = q.get("metric_id")
+        item_id = q.get("value_item_id")
+        if metric_id is not None and item_id is not None:
+            report.error(f"{where}: вказано і metric_id, і value_item_id. Питання стосується рівно "
+                         f"одного з них (або обидва null, якщо питання загальне)")
         if metric_id is not None and metric_id not in metric_ids:
             report.warn(f"{where}: посилається на метрику {metric_id!r}, якої немає в metrics")
+        if item_id is not None and item_id not in value_item_ids:
+            report.warn(f"{where}: посилається на статтю цінності {item_id!r}, якої немає в value_items")
     return questions
 
 
@@ -271,6 +408,9 @@ def validate(data, today=None, roi_md=None):
     for key in ("version", "launched_at", "metrics", "open_questions"):
         if key not in data:
             report.error(f"Бракує поля верхнього рівня {key}")
+    if "_приклад" in data:
+        report.error("У metrics.json лишився ключ _приклад із шаблону. Це приклад, не дані: видали його")
+    # v1.1 is additive, so it keeps version 1.
     if "version" in data and data.get("version") != 1:
         report.error(f"version має бути 1, зараз {data.get('version')!r}")
     launched = None
@@ -296,7 +436,13 @@ def validate(data, today=None, roi_md=None):
     if metrics and primaries != 1:
         report.error(f"Головна метрика (primary: true) має бути рівно одна, зараз {primaries}")
 
-    questions = _check_open_questions(data.get("open_questions", []), set(ids), report)
+    value_items = data.get("value_items")
+    checked_items = []
+    if value_items is not None:
+        checked_items = _check_value_items(value_items, metrics, set(ids), report)
+    item_ids = {c[0] for c in checked_items if isinstance(c[0], str)}
+
+    questions = _check_open_questions(data.get("open_questions", []), set(ids), report, item_ids)
     for metric_id, name, missing in checked:
         if metric_id is None:
             continue
@@ -305,7 +451,15 @@ def validate(data, today=None, roi_md=None):
                 report.error(f"Метрика «{name or metric_id}»: поле {field} порожнє і немає відкритого "
                              f"питання (open_questions) з metric_id={metric_id!r}, field={field!r}. "
                              f"Спитай автоматизатора: значення з джерелом, «не знаю, знає: ...» "
-                             f"або «неможливо зміряти, бо ...» (тоді причина в Caveats)")
+                             f"або «неможливо зміряти, бо ...» (для baseline причина йде в "
+                             f"baseline.not_applicable_why)")
+    for item_id, missing in checked_items:
+        for field in missing:
+            if item_id is None or _has_question(questions, item_id, field, key="value_item_id"):
+                continue
+            report.error(f"Стаття цінності «{item_id}»: поле {field} порожнє і немає відкритого "
+                         f"питання з value_item_id={item_id!r}, field={field!r}. Спитай "
+                         f"автоматизатора: значення з джерелом або «не знаю, знає: ...»")
 
     for m in metrics:
         if not isinstance(m, dict):
@@ -322,6 +476,15 @@ def validate(data, today=None, roi_md=None):
         if first.lower().startswith("measured") and not has_measured_after_launch(data):
             report.error("dashboard/ROI.md каже Measured, але в metrics.json немає жодного заміру "
                          "з kind: measured після launched_at. Має бути Estimated")
+        summary = value_summary(data)
+        if summary:
+            results = _section(roi_md, "Actual Results") or ""
+            lines = [ln.strip() for ln in re.sub(r"<!--.*?-->", "", results, flags=re.DOTALL)
+                     .splitlines() if ln.strip()]
+            if lines[:2] != list(summary):
+                report.error("dashboard/ROI.md «## Actual Results» має починатися з двох рядків "
+                             f"підсумку цінності з value_items: «{summary[0]}» і «{summary[1]}». "
+                             "Перегенеруй ROI.md")
     return report.errors, report.warnings
 
 

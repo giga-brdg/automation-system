@@ -15,9 +15,11 @@ from .metrics_contract import is_number, overdue_date, parse_and_validate, parse
 from .models import (
     AutomationEvent,
     AutomationMetric,
+    AutomationValueItem,
     MetricConfirmation,
     MetricMeasurement,
     MetricsSnapshot,
+    ValueItemConfirmation,
     _now,
 )
 
@@ -36,6 +38,11 @@ EVENT_LABELS = {
     "confirmed": "Підтверджено",
     "confirmation_reset": "Підтвердження скинуто",
     "roi_field_changed": "Змінено поле ROI вручну",
+    "value_item_added": "Статтю цінності додано",
+    "value_item_changed": "Статтю цінності змінено",
+    "value_item_removed": "Статтю цінності прибрано",
+    "value_item_confirmed": "Вердикт по статті цінності",
+    "value_confirmation_reset": "Вердикт по статті скинуто",
 }
 
 VERDICTS = {
@@ -156,8 +163,10 @@ def apply_metrics_file(automation, text, commit_sha=None, actor=None, roi_md=Non
                       old_value={"name": metric.name}, commit_sha=commit_sha)
 
     _apply_measurements(automation, data, snapshot, actor, commit_sha)
+    _apply_value_items(automation, data, snapshot, actor, commit_sha)
     db.session.flush()
     _reset_stale_confirmations(automation, actor, commit_sha)
+    _reset_stale_value_confirmations(automation, actor, commit_sha)
     log_event(automation, "sync_ok", actor, commit_sha=commit_sha,
               new_value={"metrics": len(data["metrics"]), "open_questions": len(data["open_questions"])})
     return [f"dashboard/metrics.json: {w}" for w in warnings]
@@ -283,6 +292,180 @@ def confirm_metric(automation, metric_key, snapshot_id, verdict, comment, user):
               new_value={"verdict": verdict, "comment": comment, "snapshot_id": snapshot.id},
               commit_sha=snapshot.commit_sha)
     return confirmation
+
+
+# --- Value items (contract v1.1) ------------------------------------------------
+
+_VALUE_ITEM_FIELDS = ("category", "title", "usd_per_month", "kind", "basis", "formula", "why",
+                      "source", "as_of", "metric_ids")
+# What a verdict on an item covers: any change here resets it.
+_VALUE_VERDICT_FIELDS = ("usd_per_month", "formula", "kind")
+_VALUE_RESET_REASONS = {"usd_per_month": "змінено $/міс", "formula": "змінено формулу",
+                        "kind": "змінено статус (замір/оцінка)"}
+
+
+def _item_state(row):
+    return {f: getattr(row, f) for f in _VALUE_ITEM_FIELDS}
+
+
+def _incoming_item_state(entry):
+    state = {f: entry.get(f) for f in _VALUE_ITEM_FIELDS}
+    if is_number(state["usd_per_month"]):
+        state["usd_per_month"] = float(state["usd_per_month"])
+    return state
+
+
+def _apply_value_items(automation, data, snapshot, actor, commit_sha):
+    """Upserts AutomationValueItem rows from a valid file's value_items and
+    journals each addition, change (old -> new of the fields that changed)
+    and removal. A file without value_items removes every active item."""
+    stored = {r.item_key: r for r in AutomationValueItem.query.filter_by(automation_id=automation.id)}
+    seen = set()
+    for entry in data.get("value_items") or []:
+        key = entry["id"]
+        seen.add(key)
+        new = _incoming_item_state(entry)
+        row = stored.get(key)
+        if row is None:
+            row = AutomationValueItem(automation_id=automation.id, item_key=key)
+            db.session.add(row)
+            stored[key] = row
+            log_event(automation, "value_item_added", actor, metric_key=key,
+                      new_value={"title": new["title"], "usd_per_month": new["usd_per_month"],
+                                 "formula": new["formula"]}, commit_sha=commit_sha)
+        else:
+            old = _item_state(row)
+            changed = [f for f in _VALUE_ITEM_FIELDS if old[f] != new[f]]
+            if not row.is_active:
+                log_event(automation, "value_item_added", actor, metric_key=key,
+                          new_value={"title": new["title"], "usd_per_month": new["usd_per_month"],
+                                     "formula": new["formula"]}, commit_sha=commit_sha)
+            elif changed:
+                log_event(automation, "value_item_changed", actor, metric_key=key, field=",".join(changed),
+                          old_value={f: old[f] for f in changed} | {"title": old["title"]},
+                          new_value={f: new[f] for f in changed} | {"title": new["title"]},
+                          commit_sha=commit_sha)
+        for field, value in new.items():
+            setattr(row, field, value)
+        row.is_active = True
+        row.last_snapshot_id = snapshot.id
+    for key, row in stored.items():
+        if key not in seen and row.is_active:
+            row.is_active = False
+            log_event(automation, "value_item_removed", actor, metric_key=key,
+                      old_value={"title": row.title, "usd_per_month": row.usd_per_month},
+                      commit_sha=commit_sha)
+
+
+def latest_value_confirmation(automation_id, item_key):
+    return (ValueItemConfirmation.query.filter_by(automation_id=automation_id, item_key=item_key)
+            .order_by(ValueItemConfirmation.confirmed_at.desc(), ValueItemConfirmation.id.desc()).first())
+
+
+def _value_state_change(confirmed_state, row):
+    """Why a verdict on an item no longer holds, or None if it still does."""
+    confirmed_state = confirmed_state or {}
+    for field in _VALUE_VERDICT_FIELDS:
+        if getattr(row, field) != confirmed_state.get(field):
+            return _VALUE_RESET_REASONS[field]
+    return None
+
+
+def _reset_stale_value_confirmations(automation, actor, commit_sha):
+    for row in AutomationValueItem.query.filter_by(automation_id=automation.id):
+        confirmation = latest_value_confirmation(automation.id, row.item_key)
+        if confirmation is None or confirmation.invalidated_at is not None:
+            continue
+        reason = _value_state_change(confirmation.confirmed_state, row)
+        if reason:
+            confirmation.invalidated_at = _now()
+            confirmation.invalidated_reason = reason
+            log_event(automation, "value_confirmation_reset", actor, metric_key=row.item_key,
+                      old_value={"verdict": confirmation.verdict, "confirmation_id": confirmation.id},
+                      new_value={"reason": reason}, commit_sha=commit_sha)
+
+
+def confirm_value_item(automation, item_key, snapshot_id, verdict, comment, user):
+    """An admin's verdict on one value item as of `snapshot_id` (the snapshot
+    the page showed). Refused when the stored item has changed since, so a
+    verdict is never recorded against numbers the admin didn't see. Raises
+    PermissionError / ConfirmationError like confirm_metric. Caller commits."""
+    if user is None or not user.is_admin:
+        raise PermissionError("Підтверджувати результат може лише адміністратор.")
+    comment = (comment or "").strip()
+    if not comment:
+        raise ConfirmationError("Коментар обов'язковий: напиши, на чому ґрунтується вердикт.")
+    if verdict not in VERDICTS:
+        raise ConfirmationError("Невідомий вердикт.")
+    row = AutomationValueItem.query.filter_by(automation_id=automation.id, item_key=item_key,
+                                              is_active=True).first()
+    if row is None:
+        raise ConfirmationError("Такої статті цінності в цієї автоматизації немає.")
+    snapshot = db.session.get(MetricsSnapshot, snapshot_id) if snapshot_id else None
+    if snapshot is None or snapshot.automation_id != automation.id:
+        raise ConfirmationError("Знімок не знайдено.")
+    if not snapshot.is_valid:
+        raise ConfirmationError("Цей знімок не пройшов перевірку, підтверджувати на ньому не можна.")
+    entry = next((x for x in snapshot.data.get("value_items") or [] if x.get("id") == item_key), None)
+    if entry is None:
+        raise ConfirmationError("У цьому знімку такої статті немає.")
+    state = {f: _incoming_item_state(entry)[f] for f in _VALUE_VERDICT_FIELDS}
+    if _value_state_change(state, row):
+        raise ConfirmationError("Стаття змінилась після того, як сторінку відкрили. Онови сторінку "
+                                "і перевір нові цифри.")
+    confirmation = ValueItemConfirmation(
+        automation_id=automation.id, item_key=item_key, snapshot_id=snapshot.id, verdict=verdict,
+        comment=comment, confirmed_by_id=user.id, confirmed_state=state)
+    db.session.add(confirmation)
+    log_event(automation, "value_item_confirmed", user, metric_key=item_key,
+              new_value={"verdict": verdict, "comment": comment, "snapshot_id": snapshot.id,
+                         "usd_per_month": row.usd_per_month},
+              commit_sha=snapshot.commit_sha)
+    return confirmation
+
+
+VALUE_STATUS_LABELS = {
+    "estimate": "Оцінка, не доведено",
+    "measured": "Виміряно, не підтверджено",
+    "confirmed": "Підтверджено",
+    "partial": "Частково підтверджено",
+    "rejected": "Не підтверджено",
+}
+
+
+def value_item_status(row, confirmation):
+    """"confirmed" / "partial" / "rejected" while an admin's verdict on the
+    current numbers holds, else "measured" or "estimate" from the item's own
+    kind. A reset verdict counts as none."""
+    if confirmation is not None and confirmation.invalidated_at is None \
+            and _value_state_change(confirmation.confirmed_state, row) is None:
+        return confirmation.verdict
+    return "measured" if row.kind == "measured" else "estimate"
+
+
+def value_bucket(status):
+    """Which "Гроші" line an item's $/міс goes to. A "не підтверджено"
+    verdict is shown but never summed; a partial one counts by the item's
+    own kind, the same as a partial verdict on a metric does."""
+    return status if status in ("confirmed", "rejected", "measured", "estimate") else None
+
+
+def automation_value_items(automation):
+    """Active value items of one automation with their status, verdict and
+    bucket, run_cost last - [] when it has none."""
+    rows = (AutomationValueItem.query.filter_by(automation_id=automation.id, is_active=True)
+            .order_by(AutomationValueItem.id).all())
+    result = []
+    for row in rows:
+        confirmation = latest_value_confirmation(automation.id, row.item_key)
+        status = value_item_status(row, confirmation)
+        bucket = value_bucket(status)
+        if status == "partial":
+            bucket = "measured" if row.kind == "measured" else "estimate"
+        result.append({"item": row, "status": status, "label": VALUE_STATUS_LABELS[status],
+                       "bucket": bucket, "confirmation": confirmation})
+    result.sort(key=lambda e: e["item"].category == "run_cost")
+    return result
 
 
 # --- Status -----------------------------------------------------------------

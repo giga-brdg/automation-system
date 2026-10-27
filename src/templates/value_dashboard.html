@@ -196,7 +196,7 @@
 {%- endmacro %}
 
 {% macro before_target_fact(e) %}
-{% if e.baseline is not none %}<span>{{ fmt_number(e.baseline) }}</span>{% else %}{{ missing(e, 'baseline') }}{% endif %} →
+{% if e.baseline is not none %}<span>{{ fmt_number(e.baseline) }}</span>{% elif e.baseline_parts and e.baseline_parts.not_applicable %}<span class="text-muted" title="{{ e.baseline_parts.not_applicable }}">не застосовно</span>{% else %}{{ missing(e, 'baseline') }}{% endif %} →
 {% if e.target_value is not none %}<span>{{ fmt_number(e.target_value) }}</span>{% else %}{{ missing(e, 'target') }}{% endif %} →
 {% if e.latest_measured is not none %}<span class="fw-semibold {{ {"better": "text-success", "worse": "text-danger", "same": "text-muted"}.get(e.trend, '') }}">{{ fmt_number(e.latest_measured) }}</span>{% else %}<span class="text-muted">немає даних</span>{% endif %}
 <span class="text-muted">{{ e.metric.unit }}</span>
@@ -233,7 +233,9 @@
 <div><span class="text-muted">Як часто:</span> {% if e.metric.check_every_days %}раз на {{ e.metric.check_every_days }} дн.{% if e.next_due %}, наступний замір до {{ fmt_date(e.next_due) }}{% endif %}{% else %}{{ missing(e, 'check_every_days') }}{% endif %}</div>
 <div><span class="text-muted">До:</span>
   {% set b = e.baseline_parts %}
-  {% if b %}
+  {% if b and b.not_applicable %}
+    не застосовно: {{ b.not_applicable }}
+  {% elif b %}
     {{ fmt_number(b.value) }} за {{ b.period }}, {{ b.kind }}, джерело: <span title="{{ b.source_full }}">{{ b.source }}</span>
     {% if b.source_tech %}<div class="text-muted f-11">{{ b.source_tech }}</div>{% endif %}
   {% else %}{{ missing(e, 'baseline') }}{% endif %}
@@ -287,6 +289,69 @@
 {% if with_small_form and current_user.is_admin and row.snapshot_id %}{{ confirm_form(a, e, row, small=true) }}{% endif %}
 {% endmacro %}
 
+{% macro category_pill(c) -%}
+{% if c.pill_kind == 'pill' %}<span class="metric-pill {{ c.pill_class }}"><span class="dot" style="background: currentColor;"></span>{{ c.category_label or c.label }}</span>{% else %}<span class="badge {{ c.pill_class }}">{{ c.category_label or c.label }}</span>{% endif %}
+{%- endmacro %}
+
+{# A value-item field with no value: who's been asked, if anyone. #}
+{% macro item_missing(i, field) -%}
+{% if i.asked.get(field) %}<span class="text-muted">не задано, питання до: {{ i.asked[field] }}</span>{% else %}<span class="text-muted">немає даних</span>{% endif %}
+{%- endmacro %}
+
+{% macro value_confirm_form(a, i, row) %}
+<details class="mt-1">
+  <summary class="btn btn-sm btn-outline-primary py-0">Підтвердити</summary>
+  <form method="post" action="{{ url_for('automation_value_item_confirm', slug=a.slug, item_id=i.key) }}"
+        class="d-flex flex-column gap-1 mt-1" style="min-width: 200px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="snapshot_id" value="{{ row.snapshot_id }}">
+    <input type="hidden" name="next" value="{{ current_url }}">
+    <select name="verdict" class="form-select form-select-sm" aria-label="Вердикт">
+      {% for key, label in verdicts.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+    </select>
+    <input type="text" name="comment" class="form-control form-control-sm" required
+           placeholder="Коментар: на чому ґрунтується вердикт" aria-label="Коментар">
+    <button type="submit" class="btn btn-sm btn-primary">Зберегти вердикт</button>
+  </form>
+</details>
+{% endmacro %}
+
+{% macro value_items_table(a, row) %}
+{% set v = row.value %}
+<div class="mb-3">
+  <div class="text-muted">Цінність за статтями, $/міс</div>
+  {# A grid track of minmax(0, 1fr) has no min-content width, so this wide
+     table scrolls inside its own box instead of stretching the main table. #}
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr);">
+  <div class="table-responsive">
+    <table class="table table-sm mb-1 f-12">
+      <thead><tr>{% for h, w in (("Категорія", 0), ("Що дає", 160), ("$/міс", 0), ("Статус", 130), ("Обсяг з", 0), ("Як пораховано", 140), ("Чому так", 160), ("Звідки дані", 140)) %}<th style="white-space: {{ 'normal' if w else 'nowrap' }};{% if w %} min-width: {{ w }}px;{% endif %}">{{ h }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for i in v["items"] %}
+        <tr{% if i.is_run_cost and loop.index0 and not v['items'][loop.index0 - 1].is_run_cost %} class="border-top border-2"{% endif %}>
+          <td style="white-space: normal;">{{ category_pill(i) }}</td>
+          <td style="white-space: normal;">{{ i.title }}</td>
+          <td style="white-space: nowrap;" class="fw-semibold {{ 'text-danger' if i.usd is not none and i.usd < 0 else '' }}">{% if i.usd_text %}{{ i.usd_text }}{% else %}{{ item_missing(i, 'usd_per_month') }}{% endif %}</td>
+          <td style="white-space: normal;">
+            <span class="badge {{ i.badge }}">{{ i.label }}</span>
+            {% if i.confirmation %}<div class="text-muted f-11">{{ i.confirmation.who }}, {{ fmt_date(i.confirmation.when) }}: {{ i.confirmation.comment }}</div>
+            {% if i.confirmation.reset_reason %}<span class="badge bg-light-danger">скинуто: {{ i.confirmation.reset_reason }}</span>{% endif %}{% endif %}
+            {% if current_user.is_admin and row.snapshot_id %}{{ value_confirm_form(a, i, row) }}{% endif %}
+          </td>
+          <td style="white-space: normal;">{{ i.basis_label }}</td>
+          <td style="white-space: normal;">{% if i.formula %}{{ i.formula }}{% else %}{{ item_missing(i, 'formula') }}{% endif %}</td>
+          <td style="white-space: normal;">{% if i.why %}{{ i.why }}{% else %}{{ item_missing(i, 'why') }}{% endif %}</td>
+          <td style="white-space: normal;" title="{{ i.source_full }}">{% if i.source_full %}{{ i.source }}{% if i.source_tech %}<div class="text-muted f-11">{{ i.source_tech }}</div>{% endif %}<div class="text-muted f-11">станом на {{ i.as_of_text }}</div>{% else %}{{ item_missing(i, 'source') }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </div>
+  <div class="fw-semibold">Разом: підтверджено {{ fmt_usd(v.totals.confirmed) }}{% if v.seen.measured %}, виміряно, не підтверджено {{ fmt_usd(v.totals.measured) }}{% endif %}, оцінка {{ fmt_usd(v.totals.estimate) }}{% if v.seen.rejected %} <span class="text-muted fw-normal">(не підтверджено, не в сумі: {{ fmt_usd(v.totals.rejected) }})</span>{% endif %}</div>
+</div>
+{% endmacro %}
+
 <div class="card mb-3">
   <div class="table-responsive">
     <table class="table table-hover align-middle mb-0">
@@ -296,6 +361,7 @@
           <th>Головна метрика</th>
           <th>До → Ціль → Факт</th>
           <th>Статус</th>
+          <th style="white-space: normal;">Цінність, $/міс</th>
           <th>Витрати часу</th>
         </tr>
       </thead>
@@ -364,6 +430,13 @@
             {% if row.rejected %}<span class="badge bg-light-danger">файл метрик відхилено ({{ row.rejected.errors|length }} помилок)</span>{% endif %}
             </div>
           </td>
+          <td class="f-13" style="white-space: normal; min-width: 110px;">
+            {% if row.value %}
+              <div class="fw-semibold">{{ fmt_usd(row.value.net) if row.value.net is not none else "—" }}</div>
+              {% if row.value.categories %}<div class="d-flex flex-wrap gap-1 my-1">{% for c in row.value.categories %}{{ category_pill(c) }}{% endfor %}</div>{% endif %}
+              {% if row.value.status %}<span class="badge {{ row.value.status_badge }} text-start" style="white-space: normal;">{{ row.value.status_label }}</span>{% endif %}
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
           <td class="f-13 text-muted">
             {% if a.roi and (a.roi.dev_hours is not none or a.roi.maintenance_hours_per_month is not none) %}
               {{ fmt_number(a.roi.dev_hours) ~ " г" if a.roi.dev_hours is not none else "—" }} /
@@ -377,12 +450,12 @@
              ones too), so this row and its history table opt back into
              wrapping; otherwise the long method/source prose would stretch
              the whole table past the card. #}
-          <td colspan="5" class="pt-0 border-top-0" style="white-space: normal;">
+          <td colspan="6" class="pt-0 border-top-0" style="white-space: normal;">
             {# On a phone the table scrolls sideways inside its card; keep the
                details pinned to the visible width so they read without that. #}
             <div style="position: sticky; left: 0; max-width: calc(100vw - 3rem);">
             <details>
-              <summary class="text-primary f-13" style="cursor:pointer;">Деталі{% if row.metrics %}: {{ row.metrics|length }} метрик{% if row.open_questions %}, {{ row.open_questions|length }} відкритих питань{% endif %}{% elif row.rejected %}: чому відхилено файл метрик{% endif %}</summary>
+              <summary class="text-primary f-13" style="cursor:pointer;">Деталі{% if row.metrics %}: {{ row.metrics|length }} метрик{% if row.value %}, {{ row.value["items"]|length }} статей цінності{% endif %}{% if row.open_questions %}, {{ row.open_questions|length }} відкритих питань{% endif %}{% elif row.rejected %}: чому відхилено файл метрик{% endif %}</summary>
               <div class="mt-2 f-13">
 
                 {% if row.rejected %}
@@ -395,6 +468,8 @@
                   <div>{{ row.rejected.hint }}</div>
                 </div>
                 {% endif %}
+
+                {% if row.value %}{{ value_items_table(a, row) }}{% endif %}
 
                 {% if p %}
                 {% if current_user.is_admin and row.snapshot_id %}{{ confirm_form(a, p, row) }}{% endif %}
@@ -441,7 +516,7 @@
         {% endif %}
         {% endfor %}
         {% else %}
-        <tr><td colspan="5" class="text-center text-muted py-4">Немає автоматизацій за цим фільтром.</td></tr>
+        <tr><td colspan="6" class="text-center text-muted py-4">Немає автоматизацій за цим фільтром.</td></tr>
         {% endif %}
       </tbody>
     </table>

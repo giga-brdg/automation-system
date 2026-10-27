@@ -639,6 +639,53 @@ class MetricConfirmation(db.Model):
     confirmed_by = db.relationship("User")
 
 
+class AutomationValueItem(db.Model):
+    """Current state of one value item (contract v1.1 `value_items`): what
+    the automation is worth per month in one category, and why. item_key is
+    the contract's `id`. Like AutomationMetric, an item that disappears from
+    the repo is kept with is_active=False so its verdicts still belong
+    somewhere."""
+    __table_args__ = (db.UniqueConstraint("automation_id", "item_key"),)
+    id = db.Column(db.Integer, primary_key=True)
+    automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False, index=True)
+    item_key = db.Column(db.String(120), nullable=False)
+    category = db.Column(db.String(20), nullable=False)
+    title = db.Column(db.Text, nullable=False)
+    usd_per_month = db.Column(db.Float)  # None while an open question stands for it
+    kind = db.Column(db.String(20), nullable=False)
+    basis = db.Column(db.String(20), nullable=False)
+    formula = db.Column(db.Text)
+    why = db.Column(db.Text)
+    source = db.Column(db.Text)
+    as_of = db.Column(db.String(10))
+    metric_ids = db.Column(db.JSON)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    last_snapshot_id = db.Column(db.Integer, db.ForeignKey("metrics_snapshot.id"))
+    updated_at = db.Column(db.DateTime, default=_now, onupdate=_now)
+
+
+class ValueItemConfirmation(db.Model):
+    """An admin's verdict on one value item, the item counterpart of
+    MetricConfirmation. Its own table rather than extra columns there: the
+    migration only creates tables, and a verdict on an item covers different
+    state (usd_per_month, formula, kind) than one on a metric. Only
+    invalidated_at/invalidated_reason are ever set later, when a sync
+    changes any of that state."""
+    id = db.Column(db.Integer, primary_key=True)
+    automation_id = db.Column(db.Integer, db.ForeignKey("automation.id"), nullable=False, index=True)
+    item_key = db.Column(db.String(120), nullable=False)
+    snapshot_id = db.Column(db.Integer, db.ForeignKey("metrics_snapshot.id"), nullable=False)
+    verdict = db.Column(db.String(20), nullable=False)  # confirmed | partial | rejected
+    comment = db.Column(db.Text, nullable=False)
+    confirmed_by_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    confirmed_at = db.Column(db.DateTime, nullable=False, default=_now)
+    confirmed_state = db.Column(db.JSON)  # {usd_per_month, formula, kind}
+    invalidated_at = db.Column(db.DateTime)
+    invalidated_reason = db.Column(db.Text)
+
+    confirmed_by = db.relationship("User")
+
+
 class AutomationEvent(db.Model):
     """The one change journal for an automation: metrics syncs and their
     effects, confirmations, and manual edits to ROI numbers that used to be

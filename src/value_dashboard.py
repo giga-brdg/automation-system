@@ -24,8 +24,8 @@ import datetime
 import re
 
 from . import metrics_sync
-from .metrics_contract import is_number, parse_date
-from .models import AutomationEvent, AutomationMetric, MetricsSnapshot
+from .metrics_contract import CATEGORIES, is_number, parse_date
+from .models import AutomationEvent, AutomationMetric, AutomationValueItem, MetricsSnapshot
 
 METRIC_LABELS = {
     "time_saved": "Час ручної праці",
@@ -90,7 +90,25 @@ CONTRACT_FIELD_LABELS = {
     "money.realization_why": "Чому такий коефіцієнт",
     "money.rate_usd_per_unit": "Ставка",
     "money.realization": "Коефіцієнт реалізації",
+    "usd_per_month": "$/міс",
+    "formula": "Як пораховано",
+    "why": "Чому так",
+    "source": "Звідки дані",
 }
+# Value-item category -> (pill kind, CSS class). Time and cost savings reuse
+# the metric pills; the rest have no pill colour of their own, so they use
+# Bootstrap's light badges rather than new CSS.
+CATEGORY_PILL = {
+    "time": ("pill", "metric-pill-time"),
+    "cost_savings": ("pill", "metric-pill-cost"),
+    "revenue": ("badge", "bg-light-success"),
+    "losses": ("badge", "bg-light-warning"),
+    "run_cost": ("badge", "bg-light-danger"),
+}
+BASIS_LABELS = {"data": "дані", "assumption": "припущення"}
+VALUE_STATUS_BADGE = {"confirmed": "bg-light-success", "partial": "bg-light-success",
+                      "measured": "bg-light-primary", "estimate": "bg-light-warning",
+                      "rejected": "bg-light-danger"}
 KIND_LABELS = {"measured": "замір", "estimate": "оцінка"}
 ASK_WHOM_LABELS = {
     "automator": "автоматизатор",
@@ -124,6 +142,15 @@ def fmt_number(value):
 
 def fmt_money(value):
     return "немає даних" if value is None else f"${value:,.2f}".replace(",", " ")
+
+
+def fmt_usd(value):
+    """Whole dollars with the sign in front: 36 -> "$36", -25 -> "-$25",
+    1348 -> "$1 348"; None -> "немає даних"."""
+    if value is None:
+        return "немає даних"
+    sign = "-" if value < 0 else ""
+    return f"{sign}${abs(round(value)):,}".replace(",", " ")
 
 
 def fmt_date(value):
@@ -192,6 +219,8 @@ def _value_with_unit(value, unit):
 
 
 _MISSING_FIELD_RE = re.compile(r"^Метрика «(.+?)»: поле (\S+) порожнє і немає відкритого питання")
+_MISSING_ITEM_FIELD_RE = re.compile(r"^Стаття цінності «(.+?)»: поле (\S+) порожнє і немає відкритого питання")
+_MONEY_TWICE_RE = re.compile(r"^Метрика «(.+?)»: є money, а гроші вже розкладені у value_items")
 _PRIMARY_RE = re.compile(r"^Головна метрика \(primary: true\) має бути рівно одна, зараз (\d+)")
 _NO_METRICS_RE = re.compile(r"^У metrics немає жодної метрики")
 _JSON_RE = re.compile(r"не є валідним JSON")
@@ -206,6 +235,14 @@ def humanize_error(message):
     if m:
         return (f"«{m.group(1)}»: не заповнено «{field_label(m.group(2))}», "
                 f"і не записано, кого про це спитати.")
+    m = _MISSING_ITEM_FIELD_RE.match(message)
+    if m:
+        return (f"Стаття цінності «{m.group(1)}»: не заповнено «{field_label(m.group(2))}», "
+                f"і не записано, кого про це спитати.")
+    m = _MONEY_TWICE_RE.match(message)
+    if m:
+        return (f"«{m.group(1)}»: гроші пораховані і в метриці, і в статтях цінності. "
+                f"Мають бути в одному місці.")
     m = _PRIMARY_RE.match(message)
     if m:
         count = int(m.group(1))
@@ -221,7 +258,10 @@ def humanize_error(message):
 
 
 def _fmt_baseline_parts(b):
-    """{"value", "period", "kind", "source", "source_tech"} for display, or None."""
+    """{"value", "period", "kind", "source", "source_tech"} for display,
+    {"not_applicable": reason} for a baseline that can't be measured, or None."""
+    if isinstance(b, dict) and b.get("value") is None and (b.get("not_applicable_why") or "").strip():
+        return {"not_applicable": b["not_applicable_why"].strip()}
     if not isinstance(b, dict) or b.get("value") is None:
         return None
     source, tech = split_source(b.get("source"))
@@ -238,9 +278,47 @@ def _short_value(event_type, value, unit):
     return fmt_number(value)
 
 
-def describe_event(event, metrics):
+def _item_change_text(old, new):
+    parts = []
+    if "usd_per_month" in (new or {}):
+        parts.append(f"{fmt_usd(old.get('usd_per_month'))} → {fmt_usd(new.get('usd_per_month'))}/міс")
+    if "formula" in (new or {}):
+        parts.append(f"формула: «{old.get('formula') or 'немає'}» → «{new.get('formula') or 'немає'}»")
+    if "kind" in (new or {}):
+        parts.append(f"{KIND_LABELS.get(old.get('kind'), old.get('kind'))} → "
+                     f"{KIND_LABELS.get(new.get('kind'), new.get('kind'))}")
+    others = [f for f in (new or {}) if f not in ("usd_per_month", "formula", "kind", "title")]
+    if others:
+        parts.append("також " + ", ".join(field_label(f) for f in others))
+    return "; ".join(parts) or "опис"
+
+
+def describe_event(event, metrics, items=None):
     """One journal row as plain Ukrainian {when, who, text}. `metrics` maps
-    metric_key -> AutomationMetric, for names and units."""
+    metric_key -> AutomationMetric, for names and units; `items` maps a
+    value item's key -> AutomationValueItem (value_* events keep the item's
+    key in metric_key)."""
+    items = items or {}
+    who = SYNC_AUTHOR if event.actor_label == metrics_sync.SYNC_ACTOR else event.actor_label
+    if event.event_type.startswith("value_"):
+        old, new = event.old_value or {}, event.new_value or {}
+        row = items.get(event.metric_key)
+        title = (row.title if row else None) or new.get("title") or old.get("title") or event.metric_key
+        t = event.event_type
+        if t == "value_item_added":
+            text = f"Додано статтю цінності: «{title}», {fmt_usd(new.get('usd_per_month'))}/міс"
+        elif t == "value_item_changed":
+            text = f"Змінено статтю «{title}»: {_item_change_text(old, new)}"
+        elif t == "value_item_removed":
+            text = f"Статтю прибрано з репо: «{title}»"
+        elif t == "value_item_confirmed":
+            verdict = metrics_sync.VERDICTS.get(new.get("verdict"), new.get("verdict"))
+            text = f"Вердикт по статті «{title}»: {verdict.lower()}, «{new.get('comment')}»"
+        elif t == "value_confirmation_reset":
+            text = f"Вердикт по статті «{title}» скинуто: {new.get('reason')}"
+        else:
+            text = metrics_sync.EVENT_LABELS.get(t, t)
+        return {"when": event.created_at, "who": who, "text": text}
     metric = metrics.get(event.metric_key) if event.metric_key else None
     name = metric.name if metric else (event.metric_key or "")
     unit = metric.unit if metric else ""
@@ -314,13 +392,17 @@ def _money_words(entry, kind):
             f"Чому такий коефіцієнт: {money.get('realization_why') or 'не пояснено'}")
 
 
-def _confirmation_info(automation_id, metric_key):
-    c = metrics_sync.latest_confirmation(automation_id, metric_key)
+def _confirmation_dict(c):
+    """A MetricConfirmation or ValueItemConfirmation for display, or None."""
     if c is None:
         return None
     return {"who": c.confirmed_by.name if c.confirmed_by else "невідомо", "when": c.confirmed_at,
             "verdict": c.verdict, "verdict_label": metrics_sync.VERDICTS.get(c.verdict, c.verdict),
             "comment": c.comment, "reset_reason": c.invalidated_reason}
+
+
+def _confirmation_info(automation_id, metric_key):
+    return _confirmation_dict(metrics_sync.latest_confirmation(automation_id, metric_key))
 
 
 def _tile_key(entry):
@@ -394,13 +476,80 @@ def _saved_hours(row):
     return None
 
 
+def _question_subject(q, metric_rows, item_rows):
+    if q.get("value_item_id") in item_rows:
+        return f"стаття «{item_rows[q['value_item_id']].title}»"
+    if q.get("metric_id") in metric_rows:
+        return metric_rows[q["metric_id"]].name
+    return "загальне"
+
+
+def build_value(automation, questions):
+    """Value items of one automation for display, plus their totals - None
+    for an automation without any (the row then looks exactly as before)."""
+    entries = metrics_sync.automation_value_items(automation)
+    if not entries:
+        return None
+    items = []
+    totals = {"confirmed": 0.0, "measured": 0.0, "estimate": 0.0, "rejected": 0.0}
+    seen = {k: False for k in totals}
+    for e in entries:
+        row = e["item"]
+        asked = {}
+        for q in questions:
+            if q.get("value_item_id") == row.item_key and q.get("field"):
+                asked.setdefault(q["field"], q["ask_whom_label"])
+        source, tech = split_source(row.source) if row.source else ("", "")
+        pill_kind, pill_class = CATEGORY_PILL.get(row.category, ("badge", "bg-light-secondary"))
+        items.append({
+            "key": row.item_key, "category": row.category,
+            "category_label": CATEGORIES.get(row.category, row.category),
+            "pill_kind": pill_kind, "pill_class": pill_class, "title": row.title,
+            "usd": row.usd_per_month, "usd_text": fmt_usd(row.usd_per_month) if row.usd_per_month is not None else None,
+            "status": e["status"], "label": e["label"], "badge": VALUE_STATUS_BADGE[e["status"]],
+            "basis_label": BASIS_LABELS.get(row.basis, row.basis), "formula": row.formula, "why": row.why,
+            "source": source, "source_tech": tech, "source_full": row.source or "",
+            "as_of_text": fmt_date(row.as_of), "asked": asked, "is_run_cost": row.category == "run_cost",
+            "confirmation": _confirmation_dict(e["confirmation"]),
+        })
+        if row.usd_per_month is not None and e["bucket"]:
+            totals[e["bucket"]] += row.usd_per_month
+            seen[e["bucket"]] = True
+    counted = [i for i, e in zip(items, entries) if i["usd"] is not None and e["bucket"] != "rejected"]
+    buckets = {e["bucket"] for i, e in zip(items, entries) if i["usd"] is not None and e["bucket"] != "rejected"}
+    if not counted:
+        status = None
+    elif buckets == {"confirmed"}:
+        status = "confirmed"
+    elif buckets <= {"confirmed", "measured"}:
+        status = "measured"
+    else:
+        status = "estimate"
+    categories = []
+    for code in CATEGORIES:
+        if any(i["category"] == code for i in items):
+            kind, cls = CATEGORY_PILL[code]
+            categories.append({"label": CATEGORIES[code], "pill_kind": kind, "pill_class": cls})
+    return {
+        "items": items,
+        "totals": totals,
+        "seen": seen,
+        "net": (totals["confirmed"] + totals["measured"] + totals["estimate"]) if counted else None,
+        "status": status,
+        "status_label": metrics_sync.VALUE_STATUS_LABELS[status] if status else None,
+        "status_badge": VALUE_STATUS_BADGE[status] if status else None,
+        "categories": categories,
+    }
+
+
 def build_row(automation, today):
     overview = metrics_sync.automation_metrics(automation, today=today)
     metric_rows = {m.metric_key: m for m in AutomationMetric.query.filter_by(automation_id=automation.id)}
+    item_rows = {r.item_key: r for r in AutomationValueItem.query.filter_by(automation_id=automation.id)}
     events = (AutomationEvent.query.filter_by(automation_id=automation.id)
               .order_by(AutomationEvent.created_at.desc(), AutomationEvent.id.desc()).limit(5).all())
     questions = [
-        dict(q, metric_name=metric_rows[q["metric_id"]].name if q.get("metric_id") in metric_rows else "загальне",
+        dict(q, metric_name=_question_subject(q, metric_rows, item_rows),
              field_label=field_label(q.get("field")), ask_whom_label=ask_whom_label(q.get("ask_whom")),
              since_text=fmt_date(q.get("since")))
         for q in overview["open_questions"]]
@@ -409,15 +558,17 @@ def build_row(automation, today):
         "format": overview["format"],
         "launched_at": overview["launched_at"],
         "rejected": _rejected_snapshot(automation.id),
-        "events": [describe_event(e, metric_rows) for e in events],
+        "events": [describe_event(e, metric_rows, item_rows) for e in events],
         "open_questions": questions,
         "metrics": [],
         "primary": None,
         "others": [],
         "snapshot_id": None,
+        "value": None,
     }
     if overview["format"] == "metrics":
         row["snapshot_id"] = metrics_sync.latest_valid_snapshot(automation.id).id
+        row["value"] = build_value(automation, questions)
         for entry in overview["metrics"]:
             metric = entry["metric"]
             baseline_value = entry["baseline"]
@@ -440,7 +591,7 @@ def build_row(automation, today):
             # of a bare "немає даних" wherever someone is already on it.
             entry["asked"] = {}
             for q in questions:
-                if q.get("metric_id") == metric.metric_key and q.get("field"):
+                if q.get("metric_id") == metric.metric_key and q.get("value_item_id") is None and q.get("field"):
                     entry["asked"].setdefault(q["field"].split(".")[0], q["ask_whom_label"])
             entry["history"] = [
                 dict(m, date_text=fmt_date(m["date"]), period_text=fmt_period(m["period"]),
@@ -495,6 +646,14 @@ def build_context(automations, today=None):
     money = {"confirmed": 0.0, "measured": 0.0, "estimate": 0.0, "rejected": 0.0}
     money_seen = {k: False for k in money}
     for row in rows:
+        # Value items are where an automation's money lives once it has them
+        # (the contract forbids metric.money next to them); never both.
+        if row["value"]:
+            for key in money:
+                if row["value"]["seen"][key]:
+                    money[key] += row["value"]["totals"][key]
+                    money_seen[key] = True
+            continue
         for e in row["metrics"]:
             bucket = _money_bucket(e)
             if bucket:

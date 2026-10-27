@@ -136,7 +136,13 @@ badge variant name that templates combine with that stylesheet's classes).
   Every change, plus admin confirmations (`MetricConfirmation`) and manual edits of
   ROI numbers in the card and Stage 1 forms, goes to one `AutomationEvent` journal.
   `metrics_sync.compute_status` is the single place a metric's status, overdue flag,
-  result and money are worked out.
+  result and money are worked out. Contract v1.1's `value_items` (money broken into
+  items by category, each with formula, why and source) go to `AutomationValueItem`
+  the same way: kept inactive when the repo drops one, every add/change/removal
+  journaled. An admin's verdict on an item (`ValueItemConfirmation`) is reset by a
+  sync that changes its `usd_per_month`, `formula` or `kind`. An automation with
+  value items gets its money on `/value` from them only, never also from
+  `AutomationMetric.money`.
   `dashboard/SECURITY_REVIEW.md` is a record of the last time someone ran Claude Code's
   built-in `/security-review` command against the repo (diff-scoped, not a full-codebase
   audit) — its absence sets `security_review_at` to `None`, which `security_review_state`

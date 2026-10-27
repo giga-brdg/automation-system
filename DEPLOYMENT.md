@@ -78,6 +78,18 @@ settings, not in git:
   `postgresql` dialect), run in one transaction over `railway ssh --service web`.
   Once the code is live, `flask --app src.app migrate-metrics` should answer
   "Already migrated".
+  `flask migrate-value-items` (contract v1.1) creates two more tables,
+  `automation_value_item` and `value_item_confirmation`, and touches nothing
+  existing. **Run it on prod before pushing the code that uses them**: that code
+  reads `automation_value_item` on every `/value` load and on every sync of a
+  repo with `dashboard/metrics.json`, so both fail until the tables exist. Same
+  catch as `migrate-metrics`: the running code doesn't have the command yet, so
+  for this first rollout create the two tables with SQL compiled from the same
+  models (`CreateTable(AutomationValueItem.__table__)` and
+  `CreateTable(ValueItemConfirmation.__table__)` for the `postgresql` dialect),
+  in one transaction over `railway ssh --service web`, after a fresh backup (see
+  Rollback). Once the code is live, `flask --app src.app migrate-value-items`
+  should answer "Already migrated".
   A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without
