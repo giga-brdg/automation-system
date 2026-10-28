@@ -95,7 +95,7 @@ def test_describe_event_texts():
     manual = vd.describe_event(_event("roi_field_changed", old=10.0, new=12.5, metric_key=None,
                                       actor_label="Оксана", field="measured_hours_per_month"), METRICS)
     assert manual == {"when": datetime.datetime(2026, 9, 22, 10, 0), "who": "Оксана",
-                      "text": "Змінено вручну: виміряно годин/міс, 10 → 12.5"}
+                      "text": "Змінено вручну: виміряно годин/міс, 10 → 12,5"}
 
 
 def test_describe_event_never_shows_raw_json():

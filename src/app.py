@@ -718,8 +718,8 @@ def register_routes(app):
             target_metrics=value_dashboard.target_metrics,
             metric_pill_class=value_dashboard.METRIC_PILL_CLASS,
             fmt_number=value_dashboard.fmt_number,
-            fmt_money=value_dashboard.fmt_money,
             fmt_usd=value_dashboard.fmt_usd,
+            fmt_hours=value_dashboard.fmt_hours,
             fmt_date=value_dashboard.fmt_date,
             verdicts=metrics_sync.VERDICTS,
             current_url=request.full_path.rstrip("?"),
@@ -1020,9 +1020,9 @@ def register_routes(app):
     @admin_required
     def automation_metric_confirm(slug, metric_key):
         """Admin's verdict on one metric as of one metrics snapshot (see
-        metrics_sync.confirm_metric). No UI posts here yet - the form comes
-        with the /value redesign - but the route is real and CSRF-checked
-        like every other session POST."""
+        metrics_sync.confirm_metric), posted from /value's verdict form under
+        each metric (admins only). CSRF-checked like every other session POST;
+        lands back on /value."""
         automation = Automation.query.filter_by(slug=slug).first_or_404()
         # Only ever back to /value (the one page with this form), so a
         # crafted `next` can't turn this into an open redirect.

@@ -21,6 +21,7 @@ periods, sources, open questions, journal entries and validation errors are
 turned into plain Ukrainian here rather than in the template.
 """
 import datetime
+import decimal
 import re
 
 from . import metrics_sync
@@ -132,25 +133,38 @@ def target_metrics(automation):
 # --- Text formatting (pure, also exposed to the template) --------------------
 
 def fmt_number(value):
+    """12.8 -> "12,8", 61.0 -> "61": a decimal comma, at most two places."""
     if value is None:
         return "немає даних"
-    if is_number(value):
+    # ROIEntry's Numeric columns come back as Decimal("8.00").
+    if is_number(value) or isinstance(value, decimal.Decimal):
         value = float(value)
-        return f"{value:.0f}" if value == int(value) else f"{value:.2f}".rstrip("0").rstrip(".")
+        return f"{value:.0f}" if value == int(value) else f"{value:.2f}".rstrip("0").rstrip(".").replace(".", ",")
     return str(value)
 
 
-def fmt_money(value):
-    return "немає даних" if value is None else f"${value:,.2f}".replace(",", " ")
+def fmt_hours(value, signed=False):
+    """Hours with one decimal and a decimal comma: 5 -> "5,0", signed -> "+5,0"."""
+    text = f"{value:+.1f}" if signed else f"{value:.1f}"
+    return text.replace(".", ",").replace("-", MINUS)
+
+
+MINUS = "−"
+# Thousands separator: a no-break space, so "$1 220" never splits across lines
+# in the narrow value column.
+THOUSANDS_SEP = " "
 
 
 def fmt_usd(value):
-    """Whole dollars with the sign in front: 36 -> "$36", -25 -> "-$25",
-    1348 -> "$1 348"; None -> "немає даних"."""
+    """The one money format on /value (tiles, value column, totals, journal):
+    whole dollars, no cents, a no-break space between thousands and a real
+    minus sign in front - 575 -> "$575", 1220 -> "$1 220", -40 -> "−$40".
+    None -> "—"."""
     if value is None:
-        return "немає даних"
-    sign = "-" if value < 0 else ""
-    return f"{sign}${abs(round(value)):,}".replace(",", " ")
+        return "—"
+    dollars = round(float(value))
+    sign = MINUS if dollars < 0 else ""
+    return f"{sign}${abs(dollars):,}".replace(",", THOUSANDS_SEP)
 
 
 def fmt_date(value):
@@ -181,7 +195,7 @@ def fmt_period(value):
 
 # A path with a slash, a file with a code extension, or a _private_name /
 # snake_case identifier: real, but meaningless to someone reading /value.
-_TECH_TOKEN_RE = re.compile(r"`[^`]*`|[\w.\-]*/[\w./\-]+|\b\w+\.(?:py|js|ts|sh|sql|json|md)\b|\b_\w+\b|\b[a-z]+_[a-z_]+\b")
+_TECH_TOKEN_RE = re.compile(r"`[^`]*`|[\w.\-]*/[\w./\-]+|\b\w+\.(?:py|js|ts|sh|sql|jsonl?|md|csv|ya?ml|txt|log)\b|\b_\w+\b|\b[a-z]+_[a-z_]+\b")
 
 
 def split_source(value):
@@ -306,7 +320,9 @@ def describe_event(event, metrics, items=None):
         title = (row.title if row else None) or new.get("title") or old.get("title") or event.metric_key
         t = event.event_type
         if t == "value_item_added":
-            text = f"Додано статтю цінності: «{title}», {fmt_usd(new.get('usd_per_month'))}/міс"
+            amount = new.get("usd_per_month")
+            text = (f"Додано статтю цінності: «{title}», "
+                    + (f"{fmt_usd(amount)}/міс" if amount is not None else "сума ще не задана"))
         elif t == "value_item_changed":
             text = f"Змінено статтю «{title}»: {_item_change_text(old, new)}"
         elif t == "value_item_removed":
@@ -388,7 +404,7 @@ def _money_words(entry, kind):
     if money is None or gain is None or total is None:
         return None
     return (f"різниця {fmt_number(gain)} × ставка ${fmt_number(money.get('rate_usd_per_unit'))} × "
-            f"коефіцієнт {fmt_number(money.get('realization'))} = {fmt_money(total)}/міс. "
+            f"коефіцієнт {fmt_number(money.get('realization'))} = {fmt_usd(total)}/міс. "
             f"Чому такий коефіцієнт: {money.get('realization_why') or 'не пояснено'}")
 
 
@@ -478,10 +494,120 @@ def _saved_hours(row):
 
 def _question_subject(q, metric_rows, item_rows):
     if q.get("value_item_id") in item_rows:
-        return f"стаття «{item_rows[q['value_item_id']].title}»"
+        return item_rows[q["value_item_id"]].title
     if q.get("metric_id") in metric_rows:
         return metric_rows[q["metric_id"]].name
-    return "загальне"
+    return "Загальне"
+
+
+def _value_status(buckets):
+    """Overall status of the money that counts, from the buckets it sits in."""
+    if not buckets:
+        return None
+    if buckets == {"confirmed"}:
+        return "confirmed"
+    if buckets <= {"confirmed", "measured"}:
+        return "measured"
+    return "estimate"
+
+
+# --- The three blocks an expanded row opens with -----------------------------
+
+MAX_FRESH = 3
+EVENTS_SHOWN = 5
+EVENTS_LOADED = 50
+
+
+def _money_summary(row):
+    """Block 1's headline: "≈ $575/міс, оцінка, не доведено" plus the
+    confirmed part under it. Value items when there are any, else the
+    metrics' own money; {"headline": None} when nothing is counted yet."""
+    if row["value"]:
+        v = row["value"]
+        totals, seen, net, status = v["totals"], v["seen"], v["net"], v["status"]
+    else:
+        totals = {"confirmed": 0.0, "measured": 0.0, "estimate": 0.0, "rejected": 0.0}
+        seen = {k: False for k in totals}
+        for e in row["metrics"]:
+            bucket = _money_bucket(e)
+            if bucket:
+                totals[bucket[0]] += bucket[1]
+                seen[bucket[0]] = True
+        counted = {k for k in ("confirmed", "measured", "estimate") if seen[k]}
+        net = sum(totals[k] for k in counted) if counted else None
+        status = _value_status(counted)
+    if net is None:
+        return {"headline": None, "sub": None, "negative": False}
+    if status == "confirmed":
+        headline, sub = f"{fmt_usd(net)}/міс, підтверджено", None
+    else:
+        words = {"measured": "виміряно, не підтверджено", "estimate": "оцінка, не доведено"}[status]
+        headline, sub = f"≈ {fmt_usd(net)}/міс, {words}", f"підтверджено {fmt_usd(totals['confirmed'])}"
+    if seen["rejected"]:
+        sub = (sub + ", " if sub else "") + f"не підтверджено і не в сумі {fmt_usd(totals['rejected'])}"
+    return {"headline": headline, "sub": sub, "negative": net < 0}
+
+
+def _fresh_line(entry):
+    """One block-2 row: "61% → 57%", arrow and its tone. Green when the
+    number moved the metric's way, red when against it, grey when it moved by
+    less than 1 or there is no "before" to compare with."""
+    metric = entry["metric"]
+    before, after = entry["baseline"], entry["latest_measured"]
+    diff = None if before is None else after - before
+    if diff is None or abs(diff) < 1:
+        tone = "muted"
+    else:
+        tone = "success" if (diff < 0) == (metric.direction == "down") else "danger"
+    arrow = "right" if not diff else ("down" if diff < 0 else "up")
+    unit = (metric.unit or "").strip()
+    if unit.startswith("%"):
+        before_text = _value_with_unit(before, unit) if before is not None else "?"
+        after_text = _value_with_unit(after, unit)
+    else:
+        before_text = fmt_number(before) if before is not None else "?"
+        after_text = _value_with_unit(after, unit)
+    target = entry["target_value"]
+    return {"name": metric.name, "is_primary": metric.is_primary,
+            "before_text": before_text, "after_text": after_text, "arrow": arrow, "tone": tone,
+            "target_text": f"ціль {_value_with_unit(target, unit)}" if target is not None else "ціль ?",
+            "date_text": fmt_date(entry["latest_measured_date"])}
+
+
+def _is_fresh(entry, today):
+    """A measured value after launch that is still within check_every_days of
+    its own date: `overdue` alone also counts later estimates as a check."""
+    if entry["latest_measured"] is None or entry["overdue"]:
+        return False
+    every = entry["metric"].check_every_days
+    return not every or entry["latest_measured_date"] + datetime.timedelta(days=every) >= today
+
+
+def _fresh_block(metrics, today):
+    """Block 2: up to MAX_FRESH metrics with a fresh measurement, primary
+    first; else one line about the next one due."""
+    fresh = [e for e in metrics if _is_fresh(e, today)]
+    fresh.sort(key=lambda e: not e["metric"].is_primary)
+    lines = [_fresh_line(e) for e in fresh[:MAX_FRESH]]
+    if lines:
+        return {"lines": lines, "empty_text": None}
+    due = min((e["next_due"] for e in metrics if e["next_due"]), default=None)
+    if due is None:
+        text = "Свіжих замірів немає"
+    elif due < today:
+        text = f"Свіжих замірів немає, замір прострочено з {fmt_date(due)}"
+    else:
+        text = f"Свіжих замірів немає, наступний до {fmt_date(due)}"
+    return {"lines": [], "empty_text": text}
+
+
+def _question_groups(questions):
+    """Block 3: open questions grouped by who to ask, biggest group first."""
+    groups = {}
+    for q in questions:
+        groups.setdefault(q["ask_whom_label"], []).append({"subject": q["metric_name"], "question": q["question"]})
+    ordered = sorted(groups.items(), key=lambda g: -len(g[1]))
+    return [{"who": who, "count": len(items), "items": items} for who, items in ordered]
 
 
 def build_value(automation, questions):
@@ -516,15 +642,8 @@ def build_value(automation, questions):
             totals[e["bucket"]] += row.usd_per_month
             seen[e["bucket"]] = True
     counted = [i for i, e in zip(items, entries) if i["usd"] is not None and e["bucket"] != "rejected"]
-    buckets = {e["bucket"] for i, e in zip(items, entries) if i["usd"] is not None and e["bucket"] != "rejected"}
-    if not counted:
-        status = None
-    elif buckets == {"confirmed"}:
-        status = "confirmed"
-    elif buckets <= {"confirmed", "measured"}:
-        status = "measured"
-    else:
-        status = "estimate"
+    status = _value_status({e["bucket"] for i, e in zip(items, entries)
+                            if i["usd"] is not None and e["bucket"] != "rejected"})
     categories = []
     for code in CATEGORIES:
         if any(i["category"] == code for i in items):
@@ -547,7 +666,7 @@ def build_row(automation, today):
     metric_rows = {m.metric_key: m for m in AutomationMetric.query.filter_by(automation_id=automation.id)}
     item_rows = {r.item_key: r for r in AutomationValueItem.query.filter_by(automation_id=automation.id)}
     events = (AutomationEvent.query.filter_by(automation_id=automation.id)
-              .order_by(AutomationEvent.created_at.desc(), AutomationEvent.id.desc()).limit(5).all())
+              .order_by(AutomationEvent.created_at.desc(), AutomationEvent.id.desc()).limit(EVENTS_LOADED).all())
     questions = [
         dict(q, metric_name=_question_subject(q, metric_rows, item_rows),
              field_label=field_label(q.get("field")), ask_whom_label=ask_whom_label(q.get("ask_whom")),
@@ -564,10 +683,13 @@ def build_row(automation, today):
         "primary": None,
         "others": [],
         "snapshot_id": None,
+        "snapshot_sha": None,
         "value": None,
+        "question_groups": _question_groups(questions),
     }
     if overview["format"] == "metrics":
-        row["snapshot_id"] = metrics_sync.latest_valid_snapshot(automation.id).id
+        snapshot = metrics_sync.latest_valid_snapshot(automation.id)
+        row["snapshot_id"], row["snapshot_sha"] = snapshot.id, snapshot.commit_sha
         row["value"] = build_value(automation, questions)
         for entry in overview["metrics"]:
             metric = entry["metric"]
@@ -603,6 +725,8 @@ def build_row(automation, today):
         row["others"] = [e for e in row["metrics"] if e is not row["primary"]]
         row["tile"] = _tile_key(row["primary"]) if row["primary"] else "no_data"
         row["has_measured"] = bool(row["primary"] and row["primary"]["latest_measured"] is not None)
+        row["money_summary"] = _money_summary(row)
+        row["fresh"] = _fresh_block(row["metrics"], today)
     else:
         row["tile"] = _old_tile_key(automation)
         row["has_measured"] = row["tile"] == "measured"

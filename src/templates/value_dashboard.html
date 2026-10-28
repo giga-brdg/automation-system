@@ -36,10 +36,10 @@
   <div class="card-body">
     <div class="text-muted f-12">Заощаджено часу, на місяць</div>
     {% if saved_total is not none %}
-    <div class="fw-bold" style="font-size:2.5rem; line-height:1;">{{ "%.1f"|format(saved_total) }} <span class="f-16 text-muted fw-normal">год/міс</span></div>
+    <div class="fw-bold" style="font-size:2.5rem; line-height:1;">{{ fmt_hours(saved_total) }} <span class="f-16 text-muted fw-normal">год/міс</span></div>
     <div class="d-flex gap-3 mt-2 f-13">
-      <span><i class="ti ti-circle-filled text-success f-10"></i> {{ "%.1f"|format(saved_measured) }} год виміряно</span>
-      {% if saved_estimated > 0.05 %}<span><i class="ti ti-circle-filled text-warning f-10"></i> {{ "%.1f"|format(saved_estimated) }} год оцінка</span>{% endif %}
+      <span><i class="ti ti-circle-filled text-success f-10"></i> {{ fmt_hours(saved_measured) }} год виміряно</span>
+      {% if saved_estimated > 0.05 %}<span><i class="ti ti-circle-filled text-warning f-10"></i> {{ fmt_hours(saved_estimated) }} год оцінка</span>{% endif %}
     </div>
     {% else %}
     <div class="fw-bold f-22 text-muted">—</div>
@@ -85,12 +85,12 @@
     <div class="card mb-0 h-100"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Гроші, $/міс</div>
       {% if has_money %}
-      <div class="fw-bold f-22">{{ fmt_money(money_total) if money_total is not none else "—" }}</div>
+      <div class="fw-bold f-22">{{ fmt_usd(money_total) }}</div>
       <div class="f-11 text-muted">
-        {% if money_seen.confirmed %}<div>підтверджено: {{ fmt_money(money.confirmed) }}</div>{% endif %}
-        {% if money_seen.measured %}<div>виміряно, не підтверджено: {{ fmt_money(money.measured) }}</div>{% endif %}
-        {% if money_seen.estimate %}<div>оцінка: {{ fmt_money(money.estimate) }}</div>{% endif %}
-        {% if money_seen.rejected %}<div>не підтверджено (не в сумі): {{ fmt_money(money.rejected) }}</div>{% endif %}
+        {% if money_seen.confirmed %}<div>підтверджено: {{ fmt_usd(money.confirmed) }}</div>{% endif %}
+        {% if money_seen.measured %}<div>виміряно, не підтверджено: {{ fmt_usd(money.measured) }}</div>{% endif %}
+        {% if money_seen.estimate %}<div>оцінка: {{ fmt_usd(money.estimate) }}</div>{% endif %}
+        {% if money_seen.rejected %}<div>не підтверджено (не в сумі): {{ fmt_usd(money.rejected) }}</div>{% endif %}
       </div>
       {% else %}
       <div class="fw-bold f-22 text-muted">—</div>
@@ -104,7 +104,7 @@
   <div class="col">
     <div class="card mb-0"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Підписки, $/міс</div>
-      <div class="fw-bold f-22">{{ "$%.2f"|format(subs_cost_total) if subs_cost_total is not none else "—" }}</div>
+      <div class="fw-bold f-22">{{ fmt_usd(subs_cost_total) }}</div>
     </div></div>
   </div>
   <div class="col">
@@ -116,13 +116,13 @@
   <div class="col">
     <div class="card mb-0"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Розробка (одноразово)</div>
-      <div class="fw-bold f-22">{{ "%.1f год"|format(dev_total) if dev_total is not none else "—" }}</div>
+      <div class="fw-bold f-22">{{ fmt_hours(dev_total) ~ " год" if dev_total is not none else "—" }}</div>
     </div></div>
   </div>
   <div class="col">
     <div class="card mb-0"><div class="card-body py-3 px-3">
       <div class="text-muted f-12">Підтримка, год/міс</div>
-      <div class="fw-bold f-22">{{ "%.1f"|format(maint_total) if maint_total is not none else "—" }}</div>
+      <div class="fw-bold f-22">{{ fmt_hours(maint_total) if maint_total is not none else "—" }}</div>
     </div></div>
   </div>
 </div>
@@ -179,7 +179,7 @@
         <div class="divbar-center"></div>
         <div class="divbar-half right">{% if not is_neg %}<div class="divbar-fill pos {{ '' if r.measured else 'est' }}" style="width:{{ (r.net|abs / net_scale * 100)|round(1) }}%"></div>{% endif %}</div>
       </div>
-      <div class="fw-semibold f-13 {{ 'text-danger' if is_neg else 'text-success' }}" style="width:90px; text-align:right;">{{ "%+.1f"|format(r.net) }} год/міс</div>
+      <div class="fw-semibold f-13 {{ 'text-danger' if is_neg else 'text-success' }}" style="width:90px; text-align:right;">{{ fmt_hours(r.net, signed=true) }} год/міс</div>
     </div>
     {% endfor %}
     {% else %}
@@ -203,25 +203,25 @@
 {% if e.latest_measured_date %}<div class="text-muted f-12">замір {{ fmt_date(e.latest_measured_date) }}</div>{% endif %}
 {% endmacro %}
 
-{% macro confirm_form(a, e, row, small=false) %}
+{% macro confirm_form(a, e, row) %}
 <form method="post" action="{{ url_for('automation_metric_confirm', slug=a.slug, metric_key=e.metric.metric_key) }}"
-      class="d-flex flex-wrap align-items-start gap-2 {{ 'mt-1' if small else 'mb-3' }}">
+      class="d-flex flex-wrap align-items-start gap-2 mt-1">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="snapshot_id" value="{{ row.snapshot_id }}">
   <input type="hidden" name="next" value="{{ current_url }}">
-  {% if not small %}<span class="fw-semibold align-self-center">Вердикт щодо «{{ e.metric.name }}»:</span>{% endif %}
-  <select name="verdict" class="form-select form-select-sm" style="max-width: {{ 150 if small else 180 }}px;" aria-label="Вердикт">
+  <select name="verdict" class="form-select form-select-sm" style="max-width: 150px;" aria-label="Вердикт">
     {% for key, label in verdicts.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
   </select>
-  <input type="text" name="comment" class="form-control form-control-sm" style="max-width: {{ 260 if small else 360 }}px;"
+  <input type="text" name="comment" class="form-control form-control-sm" style="max-width: 260px;"
          placeholder="Коментар: на чому ґрунтується вердикт" required aria-label="Коментар">
-  <button type="submit" class="btn btn-sm {{ 'btn-outline-primary' if small else 'btn-primary' }}">Підтвердити</button>
+  <button type="submit" class="btn btn-sm btn-outline-primary">Підтвердити</button>
 </form>
 {% endmacro %}
 
-{% macro metric_block(a, e, row, with_small_form=false) %}
+{% macro metric_block(a, e, row) %}
 <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
   <span class="fw-semibold">{{ e.metric.name }}</span>
+  <span class="text-muted f-12">id {{ e.metric.metric_key }}</span>
   {% if e.type_pill %}<span class="metric-pill {{ e.type_pill }}"><span class="dot" style="background: currentColor;"></span>{{ e.type_label }}</span>{% else %}<span class="badge bg-light-secondary">{{ e.type_label }}</span>{% endif %}
   {% if e.metric.is_primary %}<span class="badge bg-light-primary">головна</span>{% endif %}
   <span class="badge {{ {"confirmed": "bg-light-success", "measured": "bg-light-primary", "awaiting": "bg-light-warning", "no_data": "bg-light-secondary", "needs_review": "bg-light-danger"}[e.status] }}">{{ e.label }}</span>
@@ -286,7 +286,7 @@
     ще не підтверджували
   {% endif %}
 </div>
-{% if with_small_form and current_user.is_admin and row.snapshot_id %}{{ confirm_form(a, e, row, small=true) }}{% endif %}
+{% if current_user.is_admin and row.snapshot_id %}{{ confirm_form(a, e, row) }}{% endif %}
 {% endmacro %}
 
 {% macro category_pill(c) -%}
@@ -316,40 +316,133 @@
 </details>
 {% endmacro %}
 
-{% macro value_items_table(a, row) %}
-{% set v = row.value %}
+{# --- An expanded row: three blocks, then everything else under "Подробиці". #}
+
+{% macro block_money(row) %}
+{% set s = row.money_summary %}
 <div class="mb-3">
-  <div class="text-muted">Цінність за статтями, $/міс</div>
-  {# A grid track of minmax(0, 1fr) has no min-content width, so this wide
-     table scrolls inside its own box instead of stretching the main table. #}
-  <div style="display: grid; grid-template-columns: minmax(0, 1fr);">
-  <div class="table-responsive">
-    <table class="table table-sm mb-1 f-12">
-      <thead><tr>{% for h, w in (("Категорія", 0), ("Що дає", 160), ("$/міс", 0), ("Статус", 130), ("Обсяг з", 0), ("Як пораховано", 140), ("Чому так", 160), ("Звідки дані", 140)) %}<th style="white-space: {{ 'normal' if w else 'nowrap' }};{% if w %} min-width: {{ w }}px;{% endif %}">{{ h }}</th>{% endfor %}</tr></thead>
-      <tbody>
-        {% for i in v["items"] %}
-        <tr{% if i.is_run_cost and loop.index0 and not v['items'][loop.index0 - 1].is_run_cost %} class="border-top border-2"{% endif %}>
-          <td style="white-space: normal;">{{ category_pill(i) }}</td>
-          <td style="white-space: normal;">{{ i.title }}</td>
-          <td style="white-space: nowrap;" class="fw-semibold {{ 'text-danger' if i.usd is not none and i.usd < 0 else '' }}">{% if i.usd_text %}{{ i.usd_text }}{% else %}{{ item_missing(i, 'usd_per_month') }}{% endif %}</td>
-          <td style="white-space: normal;">
-            <span class="badge {{ i.badge }}">{{ i.label }}</span>
-            {% if i.confirmation %}<div class="text-muted f-11">{{ i.confirmation.who }}, {{ fmt_date(i.confirmation.when) }}: {{ i.confirmation.comment }}</div>
-            {% if i.confirmation.reset_reason %}<span class="badge bg-light-danger">скинуто: {{ i.confirmation.reset_reason }}</span>{% endif %}{% endif %}
-            {% if current_user.is_admin and row.snapshot_id %}{{ value_confirm_form(a, i, row) }}{% endif %}
-          </td>
-          <td style="white-space: normal;">{{ i.basis_label }}</td>
-          <td style="white-space: normal;">{% if i.formula %}{{ i.formula }}{% else %}{{ item_missing(i, 'formula') }}{% endif %}</td>
-          <td style="white-space: normal;">{% if i.why %}{{ i.why }}{% else %}{{ item_missing(i, 'why') }}{% endif %}</td>
-          <td style="white-space: normal;" title="{{ i.source_full }}">{% if i.source_full %}{{ i.source }}{% if i.source_tech %}<div class="text-muted f-11">{{ i.source_tech }}</div>{% endif %}<div class="text-muted f-11">станом на {{ i.as_of_text }}</div>{% else %}{{ item_missing(i, 'source') }}{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="text-muted f-12 mb-1">Скільки дає</div>
+  {% if s.headline %}
+  <div class="fw-bold f-18{{ ' text-danger' if s.negative }}">{{ s.headline }}</div>
+  {% if s.sub %}<div class="text-muted f-12">{{ s.sub }}</div>{% endif %}
+  {% else %}
+  <div class="text-muted">Грошей ще не рахували</div>
+  {% endif %}
+  {% if row.value %}
+  {# One line per item; how it was counted opens on click. Below 576px the
+     line's parts stack instead of sitting side by side. #}
+  <div class="mt-2 border-top">
+    {% for i in row.value["items"] %}
+    <details class="border-bottom">
+      <summary class="d-flex flex-column flex-sm-row align-items-sm-center gap-1 gap-sm-2 py-2" style="cursor: pointer; list-style: none;">
+        <span class="flex-shrink-0">{{ category_pill(i) }}</span>
+        <span class="flex-grow-1">{{ i.title }}</span>
+        <span class="fw-semibold text-nowrap{{ ' text-danger' if i.usd is not none and i.usd < 0 }}">{% if i.usd_text %}{{ i.usd_text }}{% else %}{{ item_missing(i, 'usd_per_month') }}{% endif %}</span>
+        <span class="flex-shrink-0"><span class="badge {{ i.badge }}">{{ i.label }}</span></span>
+      </summary>
+      <div class="pb-2 f-12">
+        <div><span class="text-muted">Як пораховано:</span> {% if i.formula %}{{ i.formula }}{% else %}{{ item_missing(i, 'formula') }}{% endif %}</div>
+        <div class="mt-1"><span class="text-muted">Чому так:</span> {% if i.why %}{{ i.why }}{% else %}{{ item_missing(i, 'why') }}{% endif %}</div>
+        <div class="mt-1"><span class="text-muted">Звідки дані:</span> {% if i.source_full %}{{ i.source }}, станом на {{ i.as_of_text }}{% else %}{{ item_missing(i, 'source') }}{% endif %} <span class="text-muted">(обсяг з: {{ i.basis_label }})</span></div>
+      </div>
+    </details>
+    {% endfor %}
   </div>
-  </div>
-  <div class="fw-semibold">Разом: підтверджено {{ fmt_usd(v.totals.confirmed) }}{% if v.seen.measured %}, виміряно, не підтверджено {{ fmt_usd(v.totals.measured) }}{% endif %}, оцінка {{ fmt_usd(v.totals.estimate) }}{% if v.seen.rejected %} <span class="text-muted fw-normal">(не підтверджено, не в сумі: {{ fmt_usd(v.totals.rejected) }})</span>{% endif %}</div>
+  {% endif %}
 </div>
+{% endmacro %}
+
+{% macro block_fresh(row) %}
+<div class="mb-3">
+  <div class="text-muted f-12 mb-1">Що змінилось у цифрах</div>
+  {% if row.fresh.lines %}
+  <div class="border-top">
+    {% for m in row.fresh.lines %}
+    <div class="d-flex flex-column flex-sm-row align-items-sm-center gap-1 gap-sm-3 py-2 border-bottom">
+      <span class="flex-grow-1">{{ m.name }}{% if m.is_primary %} <span class="badge bg-light-primary">головна</span>{% endif %}</span>
+      <span class="text-nowrap">{{ m.before_text }} → <span class="fw-semibold text-{{ m.tone }}">{{ m.after_text }}</span> <i class="ti ti-arrow-{{ m.arrow }} text-{{ m.tone }}" aria-hidden="true"></i></span>
+      <span class="text-muted text-nowrap">{{ m.target_text }}</span>
+      <span class="text-muted f-12 text-nowrap">замір {{ m.date_text }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div>{{ row.fresh.empty_text }}</div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro block_questions(row) %}
+<div class="mb-2">
+  <div class="text-muted f-12 mb-1">Щоб довести</div>
+  {% if row.open_questions %}
+  <details>
+    <summary class="text-primary" style="cursor: pointer;">Відкритих питань: {{ row.open_questions|length }} ({% for g in row.question_groups %}{{ g.who }} {{ g.count }}{{ ", " if not loop.last }}{% endfor %})</summary>
+    {% for g in row.question_groups %}
+    <div class="mt-2 fw-semibold">{{ g.who }}</div>
+    <ul class="mb-0">
+      {% for q in g["items"] %}<li>{{ q.subject }}: {{ q.question }}</li>{% endfor %}
+    </ul>
+    {% endfor %}
+  </details>
+  {% else %}
+  <div>Відкритих питань немає</div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro journal(row) %}
+<div class="text-muted">Журнал</div>
+<ul class="mb-0">
+  {% for ev in row.events[:5] %}<li>{{ ev.when.strftime('%d.%m.%Y %H:%M') }}, {{ ev.who }}: {{ ev.text }}</li>{% endfor %}
+</ul>
+{% if row.events|length > 5 %}
+<details>
+  <summary class="text-primary f-12" style="cursor: pointer;">ще</summary>
+  <ul class="mb-0">
+    {% for ev in row.events[5:] %}<li>{{ ev.when.strftime('%d.%m.%Y %H:%M') }}, {{ ev.who }}: {{ ev.text }}</li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
+{% endmacro %}
+
+{# "Подробиці": every item with its verdict button and technical source,
+   every metric in full (stale and empty ones too), the journal. #}
+{% macro details_more(a, row) %}
+{% set v = row.value %}
+<details class="mt-3 pt-2 border-top">
+  <summary class="text-primary" style="cursor: pointer;">Подробиці</summary>
+  <div class="mt-2">
+    {% if row.snapshot_sha %}<div class="text-muted f-12 mb-2">Дані з коміту {{ row.snapshot_sha[:7] }}</div>{% endif %}
+    {% if v %}
+    <div class="mb-3">
+      <div class="text-muted">Статті цінності</div>
+      {% for i in v["items"] %}
+      <div class="py-2 border-bottom">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <span class="fw-semibold">{{ i.title }}</span>
+          <span class="{{ 'text-danger' if i.usd is not none and i.usd < 0 }}">{{ i.usd_text or "—" }}</span>
+          <span class="badge {{ i.badge }}">{{ i.label }}</span>
+          <span class="text-muted f-12">id {{ i.key }}</span>
+        </div>
+        {% if i.confirmation %}<div class="text-muted f-12">{{ i.confirmation.who }}, {{ fmt_date(i.confirmation.when) }}: {{ i.confirmation.comment }}</div>
+        {% if i.confirmation.reset_reason %}<span class="badge bg-light-danger">скинуто: {{ i.confirmation.reset_reason }}</span>{% endif %}{% endif %}
+        {% if i.source_tech %}<div class="text-muted f-12">{{ i.source_tech }}</div>{% endif %}
+        {% if current_user.is_admin and row.snapshot_id %}{{ value_confirm_form(a, i, row) }}{% endif %}
+      </div>
+      {% endfor %}
+      <div class="fw-semibold mt-2">Разом: підтверджено {{ fmt_usd(v.totals.confirmed) }}{% if v.seen.measured %}, виміряно, не підтверджено {{ fmt_usd(v.totals.measured) }}{% endif %}, оцінка {{ fmt_usd(v.totals.estimate) }}{% if v.seen.rejected %} <span class="text-muted fw-normal">(не підтверджено, не в сумі: {{ fmt_usd(v.totals.rejected) }})</span>{% endif %}</div>
+    </div>
+    {% endif %}
+    {% if row.metrics %}
+    <div class="text-muted">Метрики ({{ row.metrics|length }})</div>
+    {% for e in row.metrics %}
+    <div class="py-2 mb-2{{ ' border-bottom' if not loop.last }}">{{ metric_block(a, e, row) }}</div>
+    {% endfor %}
+    {% endif %}
+    {% if row.events %}<div class="mt-2">{{ journal(row) }}</div>{% endif %}
+  </div>
+</details>
 {% endmacro %}
 
 <div class="card mb-3">
@@ -357,12 +450,12 @@
     <table class="table table-hover align-middle mb-0">
       <thead>
         <tr>
-          <th>Автоматизація</th>
-          <th>Головна метрика</th>
-          <th>До → Ціль → Факт</th>
-          <th>Статус</th>
+          <th style="white-space: normal;">Автоматизація</th>
+          <th style="white-space: normal;">Головна метрика</th>
+          <th style="white-space: normal;">До → Ціль → Факт</th>
+          <th style="white-space: normal;">Статус</th>
           <th style="white-space: normal;">Цінність, $/міс</th>
-          <th>Витрати часу</th>
+          <th style="white-space: normal;">Витрати часу</th>
         </tr>
       </thead>
       <tbody>
@@ -404,7 +497,7 @@
             {% if p %}
               {{ before_target_fact(p) }}
             {% elif row.format == 'old' and a.roi and (a.roi.best_hours_saved_per_month is not none or a.roi.measured_value) %}
-              {% if a.roi.best_hours_saved_per_month is not none %}<div>{{ "%.1f"|format(a.roi.best_hours_saved_per_month) }} год/міс</div>{% endif %}
+              {% if a.roi.best_hours_saved_per_month is not none %}<div>{{ fmt_hours(a.roi.best_hours_saved_per_month) }} год/міс</div>{% endif %}
               {% if a.roi.measured_value %}<div class="{{ 'text-muted f-12' if a.roi.best_hours_saved_per_month is not none else '' }}">{{ a.roi.measured_value }}</div>{% endif %}
             {% else %}
               <span class="text-muted">немає даних</span>
@@ -432,7 +525,7 @@
           </td>
           <td class="f-13" style="white-space: normal; min-width: 110px;">
             {% if row.value %}
-              <div class="fw-semibold">{{ fmt_usd(row.value.net) if row.value.net is not none else "—" }}</div>
+              <div class="fw-semibold">{{ fmt_usd(row.value.net) }}</div>
               {% if row.value.categories %}<div class="d-flex flex-wrap gap-1 my-1">{% for c in row.value.categories %}{{ category_pill(c) }}{% endfor %}</div>{% endif %}
               {% if row.value.status %}<span class="badge {{ row.value.status_badge }} text-start" style="white-space: normal;">{{ row.value.status_label }}</span>{% endif %}
             {% else %}<span class="text-muted">—</span>{% endif %}
@@ -469,44 +562,13 @@
                 </div>
                 {% endif %}
 
-                {% if row.value %}{{ value_items_table(a, row) }}{% endif %}
-
-                {% if p %}
-                {% if current_user.is_admin and row.snapshot_id %}{{ confirm_form(a, p, row) }}{% endif %}
-                <div class="mb-3 pb-2 border-bottom">{{ metric_block(a, p, row) }}</div>
-                {% endif %}
-
-                {% if row.others %}
-                <details class="mb-3">
-                  <summary class="text-primary" style="cursor:pointer;">Інші метрики ({{ row.others|length }})</summary>
-                  <div class="mt-2">
-                    {% for e in row.others %}
-                    <div class="mb-3 pb-2 {{ 'border-bottom' if not loop.last }}">{{ metric_block(a, e, row, with_small_form=true) }}</div>
-                    {% endfor %}
-                  </div>
-                </details>
-                {% endif %}
-
-                {% if row.open_questions %}
-                <div class="mb-3">
-                  <div class="text-muted">Відкриті питання</div>
-                  <ul class="mb-0">
-                    {% for q in row.open_questions %}
-                    <li>{{ q.metric_name }}, «{{ q.field_label }}»: {{ q.question }} (питати: {{ q.ask_whom_label }}, з {{ q.since_text }})</li>
-                    {% endfor %}
-                  </ul>
-                </div>
-                {% endif %}
-
-                {% if row.events %}
-                <div>
-                  <div class="text-muted">Останні події</div>
-                  <ul class="mb-0">
-                    {% for ev in row.events %}
-                    <li>{{ ev.when.strftime('%d.%m.%Y %H:%M') }}, {{ ev.who }}: {{ ev.text }}</li>
-                    {% endfor %}
-                  </ul>
-                </div>
+                {% if row.format == 'metrics' %}
+                {{ block_money(row) }}
+                {{ block_fresh(row) }}
+                {{ block_questions(row) }}
+                {{ details_more(a, row) }}
+                {% elif row.events %}
+                {{ journal(row) }}
                 {% endif %}
               </div>
             </details>
@@ -538,7 +600,7 @@
           <tr>
             <td class="fw-semibold">{{ s.name }}</td>
             <td>{{ s.provider or "—" }}</td>
-            <td>${{ "%.2f"|format(s.monthly_cost_usd) }}</td>
+            <td>{{ fmt_usd(s.monthly_cost_usd) }}</td>
             <td>{{ s.automations|length }}</td>
           </tr>
           {% endfor %}

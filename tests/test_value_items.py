@@ -287,9 +287,21 @@ class TestValuePage:
         assert "$11" in html  # net: 36 - 25
         assert "Оцінка, не доведено" in html
         assert "ТЕСТ Рекрутер не перевіряє воронку" in html and "9 год/міс × $8 × 0,5" in html
-        assert "-$25" in html and "Експлуатація" in html
+        assert "−$25" in html and "Експлуатація" in html
         assert "Разом: підтверджено $0, оцінка $11" in html
         assert "/automations/test-hr/value/recruiter-hours/confirm" in html
+
+    def test_item_line_opens_how_it_was_counted(self, app, client, automation):
+        _sync(automation, _doc(_item(), RUN_COST))
+        html = _page(client)
+        block = html[html.index(">Скільки дає<"):html.index(">Що змінилось у цифрах<")]
+        # Below 576px a line's parts stack; from sm up they sit in one row.
+        assert block.count('<summary class="d-flex flex-column flex-sm-row') == 2
+        for label in ("Як пораховано", "Чому так", "Звідки дані", "обсяг з: припущення",
+                      "ТЕСТ Рекрутер не перевіряє воронку", "9 год/міс × $8 × 0,5", "−$25"):
+            assert label in block
+        assert "table" not in block and "/confirm" not in block
+        assert html.count("/value/recruiter-hours/confirm") == 1
 
     def test_non_admin_sees_no_confirm_button(self, app, client, automation):
         _sync(automation, _doc(_item()))
@@ -304,7 +316,7 @@ class TestValuePage:
         _sync(automation, _doc(_item(source=None), questions=[q]))
         html = _page(client)
         assert "не задано, питання до: керівник відділу" in html
-        assert "стаття «ТЕСТ Рекрутер не перевіряє воронку»" in html
+        assert "<li>ТЕСТ Рекрутер не перевіряє воронку: Звідки 9 год?</li>" in html
 
     def test_confirmed_item_status(self, app, client, automation):
         _sync(automation, _doc(_item()))
@@ -374,10 +386,47 @@ def test_humanized_item_error():
         "Стаття цінності «recruiter-hours»: не заповнено «Як пораховано», і не записано, кого про це спитати.")
 
 
-def test_fmt_usd():
-    assert value_dashboard.fmt_usd(1348) == "$1 348"
-    assert value_dashboard.fmt_usd(-25) == "-$25"
-    assert value_dashboard.fmt_usd(None) == "немає даних"
+NBSP, MINUS = " ", "−"
+
+
+@pytest.mark.parametrize("value,expected", [
+    (0, "$0"),
+    (575, "$575"),
+    (575.4, "$575"),
+    (1220, f"$1{NBSP}220"),
+    (1219.99, f"$1{NBSP}220"),
+    (1234567, f"$1{NBSP}234{NBSP}567"),
+    (-40, f"{MINUS}$40"),
+    (-1500.5, f"{MINUS}$1{NBSP}500"),
+    (-0.4, "$0"),
+    (None, "—"),
+])
+def test_fmt_usd(value, expected):
+    assert value_dashboard.fmt_usd(value) == expected
+
+
+def test_value_page_has_one_money_format(app, client, automation):
+    """No cents anywhere on /value: tile, value column, totals, journal,
+    subscriptions and a metric's money explanation all go through fmt_usd."""
+    from src.models import Subscription
+    money_metric = _metric(id="hours", name="ТЕСТ Години", type="time", unit="год/міс", primary=False,
+                           baseline={"value": 10, "period": "2026-06-01..2026-06-30",
+                                     "source": "ТЕСТ журнал", "kind": "measured"},
+                           measurements=[{"date": "2026-09-01", "period": "2026-08-01..2026-08-31", "value": 4,
+                                          "source": "ТЕСТ журнал", "kind": "measured", "note": ""}],
+                           money={"rate_usd_per_unit": 8.5, "realization": 0.9, "realization_why": "ТЕСТ"})
+    _sync(automation, _doc(None, metrics=[_metric(), money_metric]))
+    other = Automation(slug="test-items", name="ТЕСТ Статті", owner_id=automation.owner_id)
+    db.session.add(other)
+    db.session.add(Subscription(name="ТЕСТ Railway", monthly_cost_usd=1219.99, automations=[automation]))
+    db.session.commit()
+    _sync(other, _doc(_item(usd_per_month=1220.6), RUN_COST))
+    html = _page(client)
+    assert ".00" not in html
+    assert f"$1{NBSP}220" in html  # subscriptions tile, rounded
+    assert f"$1{NBSP}221" in html  # the item
+    assert f"{MINUS}$25" in html
+    assert "$46/міс" in html  # metric money: 6 × $8.5 × 0.9 = 45.9
 
 
 def test_migrate_value_items_is_idempotent(app):

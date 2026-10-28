@@ -226,9 +226,9 @@ class TestValueRoute:
         _login(client, "o@x.com")
         html = client.get("/value").get_data(as_text=True)
         assert "live-one" in html and "idea-one" not in html and "archived-one" not in html
-        assert "5.0 <span" in html  # big card counts the live one only
+        assert "5,0 <span" in html  # big card counts the live one only
         all_html = client.get("/value?status=all").get_data(as_text=True)
-        assert "idea-one" in all_html and "555.0 <span" in all_html
+        assert "idea-one" in all_html and "555,0 <span" in all_html
 
     def test_no_money_shows_dash_not_zero(self, app, client):
         with app.app_context():
@@ -273,12 +273,11 @@ class TestValueRoute:
         client.get("/logout")
         _login(client, "admin@x.com")
         html = client.get("/value").get_data(as_text=True)
-        # One form for the primary metric above the list, a small one per
-        # other metric inside "Інші метрики".
+        # One small form under every metric inside "Подробиці", no big one
+        # above the list.
         assert html.count(">Підтвердити</button>") == 4
-        assert html.count("Вердикт щодо «") == 1
-        assert "Вердикт щодо «Заявки, що застрягли на етапі довше ліміту»" in html
-        assert "Інші метрики (3)" in html
+        assert "Вердикт щодо" not in html
+        assert "Метрики (4)" in html
         assert "не задано, питання до: керівник відділу" in html
         assert "20.05–21.07.2026" in html and "2026-05-20..2026-07-21" not in html
 
