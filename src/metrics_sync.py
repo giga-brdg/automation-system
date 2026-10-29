@@ -546,13 +546,19 @@ def latest_valid_snapshot(automation_id):
 
 
 def automation_metrics(automation, today=None):
-    """{"format": "old"|"metrics", "launched_at", "open_questions", "metrics": [...]}
-    for one automation. "old" means no valid metrics.json has ever been
-    synced - the caller falls back to ROIEntry exactly as before."""
+    """{"format": "old"|"metrics", "launched_at", "open_questions", "at_scale",
+    "metrics": [...]} for one automation. "old" means no valid metrics.json has
+    ever been synced - the caller falls back to ROIEntry exactly as before.
+
+    `at_scale` (contract v1.1) is read straight from the snapshot, like
+    open_questions and unlike metrics and value items: nothing ever edits,
+    confirms or sums it, so there is no state to keep in a table of its own -
+    the latest valid snapshot is the whole story."""
     today = today or datetime.date.today()
     snapshot = latest_valid_snapshot(automation.id)
     if snapshot is None:
-        return {"format": "old", "launched_at": None, "open_questions": [], "metrics": []}
+        return {"format": "old", "launched_at": None, "open_questions": [],
+                "at_scale": None, "metrics": []}
     data = snapshot.data
     launched_at = parse_date(data.get("launched_at"))
     rows = (AutomationMetric.query.filter_by(automation_id=automation.id, is_active=True)
@@ -572,8 +578,10 @@ def automation_metrics(automation, today=None):
                   "check_every_days": metric.check_every_days, "money": metric.money}
         result.append({"metric": metric, "measurements": measurements,
                        **compute_status(fields, measurements, launched_at, today, confirmation_info)})
+    at_scale = data.get("at_scale")
     return {"format": "metrics", "launched_at": launched_at,
-            "open_questions": data.get("open_questions") or [], "metrics": result}
+            "open_questions": data.get("open_questions") or [],
+            "at_scale": at_scale if isinstance(at_scale, dict) else None, "metrics": result}
 
 
 # --- Manual ROI edits -------------------------------------------------------

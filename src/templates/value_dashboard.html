@@ -96,6 +96,9 @@
       <div class="fw-bold f-22 text-muted">—</div>
       <div class="f-11 text-muted">грошей ще не рахували</div>
       {% endif %}
+      {% if at_scale_total is not none %}
+      <div class="f-11 text-muted mt-1" title="Сума нижніх меж для {{ at_scale_n }} автоматизацій. Оцінка, у поточну суму не входить.">потенціал на повному масштабі: ~{{ fmt_usd(at_scale_total) }}</div>
+      {% endif %}
     </div></div>
   </div>
 </div>
@@ -233,8 +236,8 @@
 <div><span class="text-muted">Як часто:</span> {% if e.metric.check_every_days %}раз на {{ e.metric.check_every_days }} дн.{% if e.next_due %}, наступний замір до {{ fmt_date(e.next_due) }}{% endif %}{% else %}{{ missing(e, 'check_every_days') }}{% endif %}</div>
 <div><span class="text-muted">До:</span>
   {% set b = e.baseline_parts %}
-  {% if b and b.not_applicable %}
-    не застосовно: {{ b.not_applicable }}
+  {% if b and b.get('not_applicable') %}
+    не застосовно: {{ b.get('not_applicable') }}
   {% elif b %}
     {{ fmt_number(b.value) }} за {{ b.period }}, {{ b.kind }}, джерело: <span title="{{ b.source_full }}">{{ b.source }}</span>
     {% if b.source_tech %}<div class="text-muted f-11">{{ b.source_tech }}</div>{% endif %}
@@ -290,7 +293,7 @@
 {% endmacro %}
 
 {% macro category_pill(c) -%}
-{% if c.pill_kind == 'pill' %}<span class="metric-pill {{ c.pill_class }}"><span class="dot" style="background: currentColor;"></span>{{ c.category_label or c.label }}</span>{% else %}<span class="badge {{ c.pill_class }}">{{ c.category_label or c.label }}</span>{% endif %}
+{% if c.pill_kind == 'pill' %}<span class="metric-pill {{ c.pill_class }}"><span class="dot" style="background: currentColor;"></span>{{ c.get('category_label') or c.get('label') }}</span>{% else %}<span class="badge {{ c.pill_class }}">{{ c.get('category_label') or c.get('label') }}</span>{% endif %}
 {%- endmacro %}
 
 {# A value-item field with no value: who's been asked, if anyone. #}
@@ -348,6 +351,23 @@
     </details>
     {% endfor %}
   </div>
+  {% endif %}
+  {% if row.at_scale %}
+  {% set scale = row.at_scale %}
+  <div class="at-scale-block mt-2 p-2 border rounded" style="overflow-wrap: anywhere;">
+    <div class="text-muted f-12">Повний масштаб</div>
+    <div class="fw-semibold">{% if scale.sum_text %}{{ scale.sum_text }}/міс{% else %}{{ item_missing(scale, 'usd_per_month_low') }}{% endif %}</div>
+    <div class="text-muted f-11">{{ scale.note }}</div>
+    {% for issue in scale.issues %}<div class="text-danger f-12">{{ issue }}</div>{% endfor %}
+    <div class="f-12 mt-1"><span class="text-muted">Обсяг:</span> {% if scale.volume %}{{ scale.volume }}{% else %}{{ item_missing(scale, 'volume') }}{% endif %}</div>
+    <div class="f-12"><span class="text-muted">Умова:</span> {% if scale.condition %}{{ scale.condition }}{% else %}{{ item_missing(scale, 'condition') }}{% endif %}</div>
+    <details class="mt-1 f-12">
+      <summary class="text-primary" style="cursor: pointer;">Як пораховано повний масштаб</summary>
+      <div>{% if scale.formula %}{{ scale.formula }}{% else %}{{ item_missing(scale, 'formula') }}{% endif %}</div>
+      <div class="mt-1"><span class="text-muted">Звідки дані:</span> {% if scale.source_full %}{{ scale.source }}{% else %}{{ item_missing(scale, 'source') }}{% endif %}</div>
+      <div class="text-muted">Станом на: {% if scale.as_of_text %}{{ scale.as_of_text }}{% else %}{{ item_missing(scale, 'as_of') }}{% endif %}</div>
+    </details>
+  </div><!-- /at-scale -->
   {% endif %}
 </div>
 {% endmacro %}
@@ -529,6 +549,9 @@
               {% if row.value.categories %}<div class="d-flex flex-wrap gap-1 my-1">{% for c in row.value.categories %}{{ category_pill(c) }}{% endfor %}</div>{% endif %}
               {% if row.value.status %}<span class="badge {{ row.value.status_badge }} text-start" style="white-space: normal;">{{ row.value.status_label }}</span>{% endif %}
             {% else %}<span class="text-muted">—</span>{% endif %}
+            {% if row.at_scale and row.at_scale.column_text %}
+            <div class="text-muted f-11 mt-1" title="{{ row.at_scale.hint or '' }}&#10;{{ row.at_scale.note }}">{{ row.at_scale.column_text }}</div>
+            {% endif %}
           </td>
           <td class="f-13 text-muted">
             {% if a.roi and (a.roi.dev_hours is not none or a.roi.maintenance_hours_per_month is not none) %}

@@ -1,5 +1,6 @@
 """Contract v1.1 in src/metrics_contract.py: value_items, value_item_id,
-baseline.not_applicable_why, the "_приклад" key and ROI.md's value summary.
+baseline.not_applicable_why, at_scale, the "_приклад" key and ROI.md's value
+summary.
 
 The cases are the ones from stage-1-supplax's tests/test_check_metrics.py.
 Each one asserts its own expected message, so it runs anywhere; when the
@@ -63,6 +64,32 @@ def value_doc(*items, **overrides):
 def question(**overrides):
     q = {"metric_id": None, "value_item_id": "recruiter-hours", "field": "formula",
          "question": "?", "ask_whom": "automator", "since": "2026-07-30"}
+    q.update(overrides)
+    return q
+
+
+# v1.1 at_scale: the "повний масштаб" block, the cold-email example from the
+# contract. Never summed with value_items, so it never carries a `kind`.
+AT_SCALE = {
+    "usd_per_month_low": 4976,
+    "usd_per_month_high": 5989,
+    "volume": "500–600 контактів/день (11–13 тис./міс)",
+    "condition": "11–13 тис. нових контактів/міс, 20–24 прогріті ящики, людина на відповіді",
+    "formula": "та сама формула, що в статтях цінності, на обсязі ТЗ, мінус сервіси $264–299",
+    "source": "ТЗ Максима 05.10.2026; CRM-когорта colddesigner",
+    "as_of": "2026-10-28",
+}
+
+
+def scale_doc(at_scale=None, **overrides):
+    return value_doc(at_scale=AT_SCALE if at_scale is None else at_scale, **overrides)
+
+
+def general_question(**overrides):
+    """A question about at_scale: both ids null, field "at_scale.<field>"."""
+    q = {"metric_id": None, "value_item_id": None, "field": "at_scale",
+         "question": "Який цільовий обсяг погоджено?", "ask_whom": "automator",
+         "since": "2026-10-28"}
     q.update(overrides)
     return q
 
@@ -131,6 +158,58 @@ CASES = [
     ("ROI.md value summary wrong", value_doc(item(), RUN_COST),
      "## Actual Results\nПідтверджено $36\n", "Actual Results", None),
     ("ROI.md without value items", doc(), "## Actual Results\n\n", None, None),
+    # at_scale
+    ("at_scale absent", value_doc(), None, None, None),
+    ("at_scale null", value_doc(at_scale=None), None, None, None),
+    ("at_scale valid", scale_doc(), None, None, None),
+    ("at_scale without value items", doc(at_scale=AT_SCALE), None, "спочатку статті цінності", None),
+    ("at_scale with empty value items", doc(at_scale=AT_SCALE, value_items=[]), None,
+     "спочатку статті цінності", None),
+    ("at_scale not an object", value_doc(at_scale=4976), None, "at_scale має бути об'єктом", None),
+    ("at_scale missing volume key", scale_doc({k: v for k, v in AT_SCALE.items() if k != "volume"}),
+     None, "бракує обов'язкових полів volume", None),
+    ("at_scale high equal to low", scale_doc(dict(AT_SCALE, usd_per_month_high=4976)), None, None, None),
+    ("at_scale high null", scale_doc(dict(AT_SCALE, usd_per_month_high=None)), None, None, None),
+    ("at_scale without high key",
+     scale_doc({k: v for k, v in AT_SCALE.items() if k != "usd_per_month_high"}), None, None, None),
+    ("at_scale low zero", scale_doc(dict(AT_SCALE, usd_per_month_low=0, usd_per_month_high=None)),
+     None, "usd_per_month_low має бути більше 0", None),
+    ("at_scale low negative",
+     scale_doc(dict(AT_SCALE, usd_per_month_low=-100, usd_per_month_high=None)), None,
+     "usd_per_month_low має бути більше 0", None),
+    ("at_scale low as string", scale_doc(dict(AT_SCALE, usd_per_month_low="4976")), None,
+     "usd_per_month_low має бути числом", None),
+    ("at_scale high as string", scale_doc(dict(AT_SCALE, usd_per_month_high="5989")), None,
+     "usd_per_month_high має бути числом", None),
+    ("at_scale high below low", scale_doc(dict(AT_SCALE, usd_per_month_high=4000)), None,
+     "менше за usd_per_month_low", None),
+    ("at_scale empty low", scale_doc(dict(AT_SCALE, usd_per_month_low=None)), None,
+     "поле at_scale.usd_per_month_low порожнє", None),
+    ("at_scale empty volume", scale_doc(dict(AT_SCALE, volume="")), None,
+     "поле at_scale.volume порожнє", None),
+    ("at_scale empty condition", scale_doc(dict(AT_SCALE, condition="")), None,
+     "поле at_scale.condition порожнє", None),
+    ("at_scale empty formula", scale_doc(dict(AT_SCALE, formula="")), None,
+     "поле at_scale.formula порожнє", None),
+    ("at_scale empty source", scale_doc(dict(AT_SCALE, source="")), None,
+     "поле at_scale.source порожнє", None),
+    ("at_scale empty as_of", scale_doc(dict(AT_SCALE, as_of="")), None,
+     "поле at_scale.as_of порожнє", None),
+    ("at_scale empty field with its own question",
+     scale_doc(dict(AT_SCALE, volume=None), open_questions=[general_question(field="at_scale.volume")]),
+     None, None, None),
+    ("at_scale question covers every field",
+     scale_doc(dict(AT_SCALE, volume=None, condition=None, usd_per_month_low=None),
+               open_questions=[general_question()]), None, None, None),
+    ("metric question doesn't cover at_scale",
+     scale_doc(dict(AT_SCALE, volume=None),
+               open_questions=[{"metric_id": "test-metric", "field": "at_scale.volume",
+                                "question": "?", "ask_whom": "automator", "since": "2026-10-28"}]),
+     None, "поле at_scale.volume порожнє", None),
+    ("at_scale bad as_of", scale_doc(dict(AT_SCALE, as_of="28.10.2026")), None,
+     "as_of має бути датою", None),
+    ("at_scale with kind key", scale_doc(dict(AT_SCALE, kind="estimate")), None, None,
+     "завжди оцінка"),
 ]
 
 
@@ -153,6 +232,15 @@ def test_value_summary_matches_skill_format():
     assert summary == ("Заміряно $36/міс, оцінка $1 323/міс",
                        "За категоріями: Дохід $1 348, Час $36, Експлуатація -$25")
     assert metrics_contract.value_summary(doc()) is None
+
+
+def test_at_scale_is_never_part_of_the_value_summary():
+    """Current money and money at the target volume are never added together,
+    so the ROI.md summary lines are the same with and without at_scale."""
+    assert metrics_contract.value_summary(scale_doc()) == metrics_contract.value_summary(value_doc())
+    assert "4 976" not in " ".join(metrics_contract.value_summary(scale_doc()))
+    roi_md = ("## Actual Results\nЗаміряно $0/міс, оцінка $36/міс\nЗа категоріями: Час $36\n")
+    assert metrics_contract.validate(scale_doc(), today=TODAY, roi_md=roi_md)[0] == []
 
 
 def test_missing_metric_field_message_points_at_not_applicable_why():

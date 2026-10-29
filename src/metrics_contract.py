@@ -1,15 +1,15 @@
 """Validation of an automation repo's dashboard/metrics.json against the v1.1
 contract (docs/metrics-contract.md; v1.1 only adds value_items,
-OpenQuestion.value_item_id and baseline.not_applicable_why, so a v1 file
-validates as before). The rules and their messages mirror
+OpenQuestion.value_item_id, baseline.not_applicable_why and at_scale, so a v1
+file validates as before). The rules and their messages mirror
 stage-1-supplax's scripts/check_metrics.py (the reference validator the
 automators run before pushing) so a file that passes there passes here and
 the other way round - but this module doesn't import or depend on the skill.
 
 The rules that read docs/roi_explained.md are skipped - matching metric names
-against its "## Метрики", its "## Цінність" table against value_items, and
-the v1 leniency for a field explained only in its "## Caveats" - since the
-sync never fetches that file.
+against its "## Метрики", its "## Цінність" table against value_items, its
+"## Повний масштаб" against at_scale, and the v1 leniency for a field
+explained only in its "## Caveats" - since the sync never fetches that file.
 The append-only rule isn't a validation error here either - the dashboard
 enforces it on its own stored measurements instead (src/metrics_sync.py),
 so a measurement changed in the repo is kept and logged, not rejected.
@@ -35,6 +35,13 @@ CATEGORIES = {"revenue": "Дохід", "cost_savings": "Економія вит�
 BASES = {"data", "assumption"}
 VALUE_ITEM_KEYS = ["id", "category", "title", "usd_per_month", "kind", "basis",
                    "formula", "why", "source", "as_of"]
+# v1.1 `at_scale`: what the automation would be worth at the agreed target
+# volume, while it still runs on a small one. Always an estimate, never summed
+# with value_items, so it has no `kind`. usd_per_month_high is the only
+# optional field (a single figure instead of a range).
+AT_SCALE_KEYS = ["usd_per_month_low", "usd_per_month_high", "volume", "condition",
+                 "formula", "source", "as_of"]
+AT_SCALE_REQUIRED = [k for k in AT_SCALE_KEYS if k != "usd_per_month_high"]
 KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PERIOD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$")
@@ -92,6 +99,21 @@ def _has_question(questions, metric_id, field, key="metric_id"):
     """`key` is "value_item_id" for a question about a value item."""
     for q in questions:
         if not isinstance(q, dict) or q.get(key) != metric_id:
+            continue
+        asked = q.get("field")
+        if isinstance(asked, str) and (field == asked or field.startswith(asked + ".")
+                                       or asked.startswith(field + ".")):
+            return True
+    return False
+
+
+def _has_general_question(questions, field):
+    """An OpenQuestion with neither metric_id nor value_item_id covers a
+    top-level field such as `at_scale.volume`; one asked about "at_scale"
+    covers all of them."""
+    for q in questions:
+        if not isinstance(q, dict) or q.get("metric_id") is not None \
+                or q.get("value_item_id") is not None:
             continue
         asked = q.get("field")
         if isinstance(asked, str) and (field == asked or field.startswith(asked + ".")
@@ -319,6 +341,58 @@ def _check_value_items(items, metrics, metric_ids, report):
     return checked
 
 
+def _check_at_scale(at_scale, value_items, report):
+    """v1.1 `at_scale`: the value at the agreed target volume for an automation
+    that runs on a small one today. Returns the missing askable fields, already
+    prefixed with "at_scale." (an OpenQuestion with both ids null stands in for
+    them)."""
+    if at_scale is None:
+        return []
+    if not isinstance(at_scale, dict):
+        report.error("at_scale має бути об'єктом {usd_per_month_low, usd_per_month_high, volume, "
+                     "condition, formula, source, as_of} або null")
+        return []
+    if not (isinstance(value_items, list) and value_items):
+        report.error("at_scale є, а статей цінності немає: спочатку статті цінності на поточному "
+                     "обсязі. Повний масштаб це та сама формула на обсязі ТЗ, без них його нема з "
+                     "чого рахувати")
+    absent = [k for k in AT_SCALE_REQUIRED if k not in at_scale]
+    if absent:
+        report.error(f"Повний масштаб: бракує обов'язкових полів {', '.join(absent)} "
+                     f"(порожнє значення пишеться як null, а не пропускається). Необов'язкове лише "
+                     f"usd_per_month_high: одна цифра замість вилки")
+
+    missing = []
+    low = at_scale.get("usd_per_month_low")
+    if _empty(low):
+        missing.append("usd_per_month_low")
+    elif not is_number(low):
+        report.error(f"Повний масштаб: usd_per_month_low має бути числом, зараз {low!r}")
+    elif low <= 0:
+        report.error(f"Повний масштаб: usd_per_month_low має бути більше 0, зараз {low}. Це чисте "
+                     f"значення на місяць після експлуатації, а не оборот")
+    high = at_scale.get("usd_per_month_high")
+    if not _empty(high):
+        if not is_number(high):
+            report.error(f"Повний масштаб: usd_per_month_high має бути числом або null "
+                         f"(одна цифра замість вилки), зараз {high!r}")
+        elif is_number(low) and high < low:
+            report.error(f"Повний масштаб: usd_per_month_high ({high}) менше за usd_per_month_low "
+                         f"({low}). Верхня межа вилки не може бути нижчою за нижню")
+    for key in ("volume", "condition", "formula", "source"):
+        if _empty(at_scale.get(key)):
+            missing.append(key)
+    as_of = at_scale.get("as_of")
+    if _empty(as_of):
+        missing.append("as_of")
+    elif parse_date(as_of) is None:
+        report.error(f"Повний масштаб: as_of має бути датою YYYY-MM-DD, зараз {as_of!r}")
+    if "kind" in at_scale:
+        report.warn("Повний масштаб: ключ kind тут не потрібен, at_scale завжди оцінка "
+                    "(обсягу ТЗ ще немає, тому зміряти його ніде). Видали ключ")
+    return [f"at_scale.{field}" for field in missing]
+
+
 def _usd(value):
     sign = "-" if value < 0 else ""
     return f"{sign}${abs(round(value)):,}".replace(",", " ")
@@ -326,7 +400,9 @@ def _usd(value):
 
 def value_summary(data):
     """The two lines dashboard/ROI.md's "## Actual Results" starts with when
-    there are value_items, or None - same as the skill's value_summary()."""
+    there are value_items, or None - same as the skill's value_summary().
+    `at_scale` is deliberately not part of either line: it's what the
+    automation would be worth at a volume it doesn't run on yet."""
     items = [x for x in (data.get("value_items") or []) if isinstance(x, dict)
              and is_number(x.get("usd_per_month"))] if isinstance(data, dict) else []
     if not items:
@@ -443,6 +519,14 @@ def validate(data, today=None, roi_md=None):
     item_ids = {c[0] for c in checked_items if isinstance(c[0], str)}
 
     questions = _check_open_questions(data.get("open_questions", []), set(ids), report, item_ids)
+
+    for field in _check_at_scale(data.get("at_scale"), value_items, report):
+        if _has_general_question(questions, field):
+            continue
+        report.error(f"Повний масштаб: поле {field} порожнє і немає відкритого питання "
+                     f"(open_questions) з metric_id=null, value_item_id=null, field={field!r}. "
+                     f"Спитай автоматизатора: значення з джерелом або «не знаю, знає: ...»")
+
     for metric_id, name, missing in checked:
         if metric_id is None:
             continue

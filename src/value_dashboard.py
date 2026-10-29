@@ -22,11 +22,17 @@ turned into plain Ukrainian here rather than in the template.
 """
 import datetime
 import decimal
+import math
 import re
 
 from . import metrics_sync
 from .metrics_contract import CATEGORIES, is_number, parse_date
-from .models import AutomationEvent, AutomationMetric, AutomationValueItem, MetricsSnapshot
+from .models import (
+    AutomationEvent,
+    AutomationMetric,
+    AutomationValueItem,
+    MetricsSnapshot,
+)
 
 METRIC_LABELS = {
     "time_saved": "Час ручної праці",
@@ -95,6 +101,14 @@ CONTRACT_FIELD_LABELS = {
     "formula": "Як пораховано",
     "why": "Чому так",
     "source": "Звідки дані",
+    "at_scale": "Повний масштаб",
+    "at_scale.usd_per_month_low": "Сума на повному масштабі",
+    "at_scale.usd_per_month_high": "Верхня межа на повному масштабі",
+    "at_scale.volume": "Обсяг",
+    "at_scale.condition": "Умова",
+    "at_scale.formula": "Як пораховано повний масштаб",
+    "at_scale.source": "Звідки дані про повний масштаб",
+    "at_scale.as_of": "Станом на",
 }
 # Value-item category -> (pill kind, CSS class). Time and cost savings reuse
 # the metric pills; the rest have no pill colour of their own, so they use
@@ -111,6 +125,10 @@ VALUE_STATUS_BADGE = {"confirmed": "bg-light-success", "partial": "bg-light-succ
                       "measured": "bg-light-primary", "estimate": "bg-light-warning",
                       "rejected": "bg-light-danger"}
 KIND_LABELS = {"measured": "замір", "estimate": "оцінка"}
+# v1.1 at_scale: the fields a general open question can stand in for, and the
+# one label that says why its money is shown but never added to anything.
+AT_SCALE_FIELDS = ("usd_per_month_low", "volume", "condition", "formula", "source", "as_of")
+AT_SCALE_NOTE = "оцінка, у суми не входить"
 ASK_WHOM_LABELS = {
     "automator": "автоматизатор",
     "department_lead": "керівник відділу",
@@ -497,6 +515,11 @@ def _question_subject(q, metric_rows, item_rows):
         return item_rows[q["value_item_id"]].title
     if q.get("metric_id") in metric_rows:
         return metric_rows[q["metric_id"]].name
+    # A question with neither id is general; the one case with a subject
+    # anyone can name is at_scale, whose fields are asked exactly that way.
+    field = q.get("field")
+    if isinstance(field, str) and (field == "at_scale" or field.startswith("at_scale.")):
+        return "Повний масштаб"
     return "Загальне"
 
 
@@ -661,6 +684,88 @@ def build_value(automation, questions):
     }
 
 
+def _scale_amount(value):
+    """Display only finite, representable amounts; keep snapshots untouched."""
+    if not is_number(value):
+        return None
+    try:
+        amount = float(value)
+    except (OverflowError, ValueError):
+        return None
+    return amount if math.isfinite(amount) else None
+
+
+def build_at_scale(at_scale, questions):
+    """Contract v1.1's `at_scale` for display - what the automation would be
+    worth at the agreed target volume, while it still runs on a small one.
+    None when the file has no such block (then the row looks as before).
+
+    The money here never joins a sum on this page - not the row's own
+    "Цінність", not the "Гроші" tile, not "Разом" in the details: it's an
+    estimate for a volume the automation doesn't run on yet, and mixing it
+    with current money would make the portfolio look several times richer
+    than it is. Hence AT_SCALE_NOTE wherever the figure shows."""
+    if not isinstance(at_scale, dict):
+        return None
+    low = _scale_amount(at_scale.get("usd_per_month_low"))
+    high = _scale_amount(at_scale.get("usd_per_month_high"))
+    bad_amount = any(is_number(at_scale.get(key)) and amount is None
+                     for key, amount in (("usd_per_month_low", low), ("usd_per_month_high", high)))
+    if bad_amount:
+        low = high = None
+    # A high equal to the low is the contract's way of writing a single
+    # figure; showing "~$4 976–$4 976" would read as a range that isn't one.
+    if low is not None and high is not None and round(high) == round(low):
+        high = None
+    if low is None:
+        sum_text = None
+    elif high is None:
+        sum_text = f"~{fmt_usd(low)}"
+    else:
+        sum_text = f"~{fmt_usd(low)}–{fmt_usd(high)}"
+
+    asked = {}
+    for q in questions:
+        if q.get("metric_id") is not None or q.get("value_item_id") is not None:
+            continue
+        field = q.get("field")
+        if not isinstance(field, str):
+            continue
+        if field == "at_scale":  # one question about the block covers every field
+            for key in AT_SCALE_FIELDS:
+                asked.setdefault(key, q["ask_whom_label"])
+        elif field.startswith("at_scale."):
+            asked.setdefault(field.split(".", 1)[1], q["ask_whom_label"])
+
+    # The reference validator permits non-string descriptions. Keep that
+    # contract, but never pass malformed snapshot data to regex/text helpers.
+    text = {key: value if isinstance(value := at_scale.get(key), str) else None
+            for key in ("volume", "condition", "formula", "source")}
+    issues = (["Перевірте дані повного масштабу: описові поля мають бути текстом."]
+              if any(at_scale.get(key) is not None and not isinstance(at_scale[key], str)
+                     for key in text) else [])
+    if bad_amount:
+        issues.append("Перевірте дані повного масштабу: суму неможливо показати як коректне число.")
+    source_full = text["source"] or ""
+    source, tech = split_source(source_full) if source_full else ("", "")
+    volume, condition = text["volume"], text["condition"]
+    hint = "\n".join(part for part in (f"Обсяг: {volume}" if volume else "",
+                                       f"Умова: {condition}" if condition else "") if part)
+    return {
+        "low": low, "high": high, "sum_text": sum_text,
+        # The narrow column line: the sum only, with the volume and the
+        # condition behind a tooltip instead of three more lines per row.
+        "column_text": f"на повному масштабі {sum_text}" if sum_text else None,
+        "hint": hint or None,
+        "note": AT_SCALE_NOTE,
+        "volume": volume, "condition": condition, "formula": text["formula"],
+        "source": source, "source_tech": tech, "source_full": source_full,
+        "issues": issues,
+        "as_of_text": fmt_date(at_scale.get("as_of")),
+        "asked": asked,
+    }
+
+
 def build_row(automation, today):
     overview = metrics_sync.automation_metrics(automation, today=today)
     metric_rows = {m.metric_key: m for m in AutomationMetric.query.filter_by(automation_id=automation.id)}
@@ -685,12 +790,14 @@ def build_row(automation, today):
         "snapshot_id": None,
         "snapshot_sha": None,
         "value": None,
+        "at_scale": None,
         "question_groups": _question_groups(questions),
     }
     if overview["format"] == "metrics":
         snapshot = metrics_sync.latest_valid_snapshot(automation.id)
         row["snapshot_id"], row["snapshot_sha"] = snapshot.id, snapshot.commit_sha
         row["value"] = build_value(automation, questions)
+        row["at_scale"] = build_at_scale(overview.get("at_scale"), questions)
         for entry in overview["metrics"]:
             metric = entry["metric"]
             baseline_value = entry["baseline"]
@@ -787,6 +894,15 @@ def build_context(automations, today=None):
     money_total = (money["confirmed"] + money["measured"] + money["estimate"]
                    if any(money_seen[k] for k in ("confirmed", "measured", "estimate")) else None)
 
+    # Separate from money_total above and never folded into it: the lower
+    # bound of what the automations that have an at_scale block would be
+    # worth at their target volume. The low end only - the tile is one line,
+    # and the cautious end of an estimate is the one worth quoting.
+    at_scale_lows = [r["at_scale"]["low"] for r in rows
+                     if r["at_scale"] and r["at_scale"]["low"] is not None]
+    at_scale_total = _scale_amount(sum(at_scale_lows)) if at_scale_lows else None
+    at_scale_n = len(at_scale_lows)
+
     type_counts = {k: 0 for k in TYPE_ORDER}
     for row in rows:
         if row["format"] == "metrics":
@@ -843,6 +959,8 @@ def build_context(automations, today=None):
         "money_total": money_total,
         "money": money,
         "money_seen": money_seen,
+        "at_scale_total": at_scale_total,
+        "at_scale_n": at_scale_n,
         "dev_total": float(sum(devs, start=0)) if devs else None,
         "dev_n": len(devs),
         "maint_total": float(sum(maints, start=0)) if maints else None,
