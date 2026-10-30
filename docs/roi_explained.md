@@ -10,58 +10,83 @@ own dashboard codebase specifically, since that's what lives here — another
 automation's `docs/roi_explained.md` won't have an equivalent implementation trace
 to write, just its own hypothesis and methodology for its own ROI number.
 
+Оновлено 30.10.2026. Розділи про цінність, метрики й відкриті питання написані
+українською, бо саме вони йдуть у картку дашборда; трасування коду нижче лишилось
+англійською, як було, і не переписувалось у цьому проході.
+
 ## Value Hypothesis
 
-The Estimated hypothesis below isn't just an adjective — it rests on two concrete
-mechanisms, each with real numbers behind it as of this writing.
+**Статус: гіпотеза до заміру.** Усі цілі нижче поставлені 30.10.2026 за запитом Іллі.
+Це не раніше погоджені обіцянки, не зобов'язання перед керівництвом і не спостережений
+результат. Підтвердженого ефекту на сьогодні немає взагалі.
 
-**Quality.** Before this dashboard, an automation's actual status lived only in scattered
-places — its own GitHub repo, a ClickUp task, or whoever happened to remember a Slack
-conversation about it. `dashboard/SUMMARY.md`'s own "What it does" names the real
-failure mode this causes: without one shared list, automations "дублюються, губляться
-або просто через рік ніхто не пам'ятає, для чого їх колись зробили." The Виміряно/Оцінка
-split (see Caveats) is a structural quality mechanism, not just a label: `github_sync.py`
-only ever flips a card's confidence to "measured" when its Confidence section's text
-literally starts with that word, so a plain hypothesis can't silently pass itself off as
-a verified result. How many cards in the live portfolio actually say "Виміряно" today is
-a fact about the production dashboard's real data, not this repo's code — read it off the
-dashboard itself rather than trusting a count written into this file, since that number
-moves every time an automation registers or re-syncs (and this repo's own local dev
-database is seed data for testing, not a stand-in for that live count).
+**Що саме змінюється.** Дашборд має замикати ланцюжок: метрика → відхилення → рішення
+→ відповідальний і строк → повторний замір. Користь дає не існування картки, а рішення,
+яке після неї ухвалили: зупинити малокорисну доробку, зняти організаційне очікування
+запуску, відновити процес, що впав, відключити зайву підписку, знайти готове рішення
+замість другої розробки того самого. Контроль «бот працює» таких рішень не дає.
 
-**Time.** The GitHub-pull sync (`/automations/<slug>/resync`, the "Оновити з GitHub"
-button, and the initial `/automations/import-github` import) mechanically replaces a
-manual step: each call reads structured fields out of 6 separate files in the target
-repo (`README.md`, `dashboard/ROI.md`, `dashboard/SUMMARY.md`, `dashboard/functions.md`,
-`dashboard/TODO.md`, `backlog/BACKLOG.md` — see `README.md`'s own description of what
-`import-github` reads) that someone would otherwise open one at a time and copy into a
-tracker by hand. That six-file count is a fact about the documented import behavior
-itself, not something that depends on how many automations happen to be registered right
-now. Putting the manual version of that pass at roughly 10-15 minutes per automation per
-update (open 6 files, find the fields, retype them somewhere) is a stated, reasonable
-ESTIMATE, not a measured one — same Confidence as everything else here — but it's the
-actual arithmetic behind "this saves time," not just a claim. That per-sync saving
-doesn't get more expensive as the portfolio grows; hunting the same information by hand
-across GitHub, ClickUp, and chat does.
+**Грошова ціль, нижній сценарій: $105,56/міс, у картку взято округлене донизу $100/міс.**
+Складові, кожна з яких є новим припущенням, а не статистикою портфеля:
+
+- **Один корисний запуск за квартал на 14 днів раніше.** Припускаємо один проєкт з
+  додатковим ефектом $1 000/міс, який виходить на цей ефект на два тижні раніше:
+  $1 000 × 14 / 30 = **$466,67 разово в тому кварталі**, тобто **$155,56/міс у
+  середньому за квартал**. Це ефект часу виходу на користь, а не новий постійний потік
+  доходу. Рахувати від моменту фактичного дозрівання користі, не від дати релізу.
+- **Одна скасована справді зайва регулярна витрата: $30/міс.** Ні послугу, ні платіж
+  поки не виявлено, це ціль перевірки витрат. Спільну підписку рахуємо один раз на весь
+  портфель.
+- **Бюджет експлуатації й підтримки: не більше $80/міс** ($20 хостингу + 4 год × $15 за
+  методикою). Це бюджет для оцінки чутливості, а не рахунки.
+
+$155,56 + $30 − $80 = **$105,56/міс**. Ціль у метриці — $100/міс.
+
+**Що навмисно НЕ додано.** 16 год/міс перенаправленого ресурсу (16 × $8 × 0,3 = $38,40/міс
+умовної вартості розвантаження) до суми не входить: ті самі години, найімовірніше, уже
+працюють всередині гіпотези про прискорений запуск, і рахувати їх двічі не можна. Для
+незалежного додавання потрібні різні рішення й окремий облік часу.
+
+**Чому цієї суми немає у «## Цінність» і чому `money` у метриках порожній.** Прискорення
+управлінськими рішеннями вже сидить усередині вікна користі самої прискореної
+автоматизації. Якщо за ті самі два тижні ефект зарахували тій автоматизації, дашборду
+його вдруге не приписуємо. Тому статей цінності в цьому репозиторії немає свідомо, а
+гроші лишаються лише як ціль головної метрики й розрахунок у цьому файлі. Це гарантує,
+що $105,56 не потрапить ні в поточні гроші портфеля, ні в його потенціал.
+
+**Чому немає блоку «повний масштаб».** Дашборд не є каналом продажів, який масштабується
+обсягом, тому цифри «на повному масштабі» для нього не рахуємо.
+
+**Що лишається поза сумою.** Збереження конверсії, якості й швидкості у відділах
+перевіряється на конкретних випадках; до появи бази не додаємо довільний відсоток від
+доходу компанії. Разова розробка дашборда й час керівників на впровадження циклу в
+бюджет не закладені.
+
+**Підтримувальна немонетарна ціль:** 16 год/міс перенаправленого ресурсу, якщо є
+підтвердження скасованої роботи й нового виконаного результату.
 
 ## Methodology
-Per-automation ROI card shows time and/or money saved vs. the manual process it
-replaced, plus an optional qualitative-value list and an optional presentation link
-(see "What Else Is On the Card" below). That's the intended headline metric, not an
-enforced one: `measured_value` is a free-text field with no unit check, so a card can
-end up showing something else entirely — the one real "measured" example in this repo
-(see Caveats) is a forecast-accuracy percentage, not a time or money figure. The
-time/money baseline comes from whatever
-the owner writes into the registration form's free-text `Гіпотеза` / `Як вимірюємо`
-fields (e.g. "this used to take 3h/week manually") — there's no independent
-measurement of the pre-automation process, and no structured schema (no dedicated
-"hours/week" number field) behind that text yet. So a capture mechanism already
-exists today, just an informal one: a generic hypothesis textbox, not a purpose-built
-baseline field. Whether that gets replaced by something structured — a dedicated
-hours-per-week input, a periodic owner check-in, or something else — is still a
-design-stage decision. Later phases add token cost per automation (daily) as a
-second, ongoing cost side of the same ROI picture — not implemented yet (no
-`token_cost` field exists on `ROIEntry`).
+
+Цінність рахуємо за рішеннями, а не за фактом синхронізації. Гроші тут це економічний
+еквівалент управлінських рішень: раніший вихід корисної автоматизації на користь плюс
+скасовані зайві платежі, мінус бюджет експлуатації. Власного постійного доходу дашборд
+не створює, і сума неадитивна щодо решти портфеля.
+
+Структура для цих чисел у програмі вже є, і це не план на майбутнє: репозиторій
+автоматизації віддає `dashboard/metrics.json` за контрактом `docs/metrics-contract.md`
+(v1.1), `src/metrics_contract.py` його валідує, `src/metrics_sync.py` зберігає заміри як
+append-only і рахує статус метрики, `src/value_dashboard.py` показує це на сторінці
+цінності. Попереднє твердження цього файлу, що структурованої схеми під числа ще немає,
+а є лише вільний текст, застаріло й тут не повторюється.
+
+Вільним текстом лишаються саме текстові поля картки (`Гіпотеза`, `Як вимірюємо`) — це й
+далі так. Окремого поля вартості токенів на `ROIEntry` досі немає: витрати на токени
+живуть у власній панелі поруч, а не всередині ROI-картки.
+
+Що міряємо по кожному рішенню, щоб замір узагалі можна було зарахувати: дата й джерело
+сигналу; значення метрики до; рішення й відповідальний; плановий строк і критерій;
+фактична дія; повторний замір; гроші, час або витрати після; інші одночасні зміни. Якщо
+сигнал першим дала людина або інший інструмент, дашборду його не приписуємо.
 
 ### What else is on the card
 Five `dashboard/ROI.md` sections feed `ROIEntry`. One of them — Actual Results —
@@ -99,10 +124,12 @@ context around it:
     lines are silently dropped, the same kind of gotcha as Qualitative Value's
     bullet-only parsing above.
 - **Presentation** → `presentation_url`, an optional link to a slide-deck Artifact,
-  rendered as a button when present. This repo's own `dashboard/ROI.md` doesn't
-  currently have a `## Presentation` section (it's an opt-in section other repos'
-  entries add when they have a deck) — the field and its rendering exist and are
-  wired end-to-end, just unused here today.
+  rendered as a button when present. This repo's own `dashboard/ROI.md` does have a
+  `## Presentation` section today, with a link to an earlier ROI deck. **Той дек
+  застарів:** він показує методику цінності до 30.10.2026 і не містить ні грошової
+  цілі $100/міс, ні трьох процесних цілей. Посилання збережене навмисно, щоб не
+  втратити артефакт, але новий дек у цьому проході не публікувався — переробляти його
+  можна лише окремим кроком з публікацією нового артефакту.
 
 All of this depends on `dashboard/ROI.md`'s section headers matching the expected
 text exactly. `parse_markdown_sections` (`github_sync.py`) keys sections by the
@@ -161,7 +188,122 @@ unlike those four, confidence is *not* additive-only through GitHub sync (see
 "What else is on the card" above): re-syncing a `ROI.md` whose Confidence section
 was removed or reworded resets the stored value to "estimated" outright.
 
+## Метрики
+
+Дата запуску: невідома. Програма працює (картка має статус live, і це не змінювалось),
+але точної дати запуску в прод ніхто не зафіксував, тому `launched_at` лишається `null`
+і заведено відкрите питання. Порожнє значення тут означає «дату не знаємо», а не «ще не
+запущено».
+
+Пілот управлінського циклу: листопад 2026, після прийняття бізнес-власником. Перший
+розбір процесних цілей — 30.11.2026. Baseline усіх чотирьох метрик невідомий і
+фіксується в перший тиждень пілота до втручання; відсутність даних не є нулем і не
+означає успіху. Грошовий сценарій прив'язаний до кварталу, тому перший його розбір —
+31.01.2027: у листопадовій перевірці квартального результату вимагати не можна.
+
+Коли придатних випадків за період немає, пишемо «немає випадків», а не автоматичні 100%.
+
+### Ефект управлінських рішень
+- id: dashboard-economic-goal
+- Головна: так
+- Тип: інше
+- Одиниця: $/міс
+- Що краще: більше
+- До: немає, див. відкриті питання
+- Ціль: 100. Чому саме така: нова ціль, поставлена 30.10.2026 за запитом Іллі, округлена
+  донизу з нижнього сценарію $105,56/міс ($155,56 середньомісячного ефекту від одного
+  прискореного на 14 днів запуску за квартал плюс $30 скасованої підписки мінус $80
+  бюджету експлуатації). Це не раніше погоджена обіцянка і не виміряний результат
+- Як перевіряємо: щокварталу звіряємо журнал рішень і рахуємо лише ті випадки, де є
+  зафіксований початковий графік, рішення з причиною прискорення, фактичний результат і
+  підтвердження, що цей самий ефект не зарахований самій автоматизації
+- Як часто міряємо: раз на 90 днів
+
+| Дата | Період | Значення | Джерело | Замір чи оцінка | Примітка |
+|---|---|---|---|---|---|
+
+Гроші: не рахуємо, сума живе в цілі метрики і в «## Value Hypothesis»
+
+### Активні автоматизації зі свіжим заміром
+- id: live-automations-with-fresh-metric
+- Головна: ні
+- Тип: якість
+- Одиниця: %
+- Що краще: більше
+- До: немає, див. відкриті питання
+- Ціль: 90. Чому саме така: поріг пілота, обраний Іллею 30.10.2026; це не спостережений
+  рівень і не раніше погоджена ціль
+- Як перевіряємо: раз на місяць рахуємо частку активних автоматизацій, у яких є ключовий
+  показник, ціль, відповідальний і замір не старіший за погоджену для них частоту
+- Як часто міряємо: раз на 30 днів
+
+| Дата | Період | Значення | Джерело | Замір чи оцінка | Примітка |
+|---|---|---|---|---|---|
+
+Гроші: не рахуємо
+
+### Рішення за відхиленнями за два дні
+- id: deviation-decisions-within-2-days
+- Головна: ні
+- Тип: якість
+- Одиниця: %
+- Що краще: більше
+- До: немає, див. відкриті питання
+- Ціль: 90. Чому саме така: поріг пілота, обраний Іллею 30.10.2026; це не спостережений
+  рівень і не раніше погоджена ціль
+- Як перевіряємо: раз на місяць рахуємо частку підтверджених суттєвих відхилень, за
+  якими протягом двох робочих днів після виявлення записані рішення, відповідальний і
+  строк; нестача або прострочення заміру теж вважається відхиленням
+- Як часто міряємо: раз на 30 днів
+
+| Дата | Період | Значення | Джерело | Замір чи оцінка | Примітка |
+|---|---|---|---|---|---|
+
+Гроші: не рахуємо
+
+### Повторний замір після виправлення
+- id: due-actions-with-repeat-measurement
+- Головна: ні
+- Тип: якість
+- Одиниця: %
+- Що краще: більше
+- До: немає, див. відкриті питання
+- Ціль: 80. Чому саме така: поріг пілота, обраний Іллею 30.10.2026; це не спостережений
+  рівень і не раніше погоджена ціль
+- Як перевіряємо: раз на місяць рахуємо частку дій, строк оцінки яких настав, за якими
+  зроблено повторний замір; успішним закриттям вважаємо лише досягнення заздалегідь
+  погодженого критерію, а не закриту задачу, і горизонт беремо з бізнес-процесу
+- Як часто міряємо: раз на 30 днів
+
+| Дата | Період | Значення | Джерело | Замір чи оцінка | Примітка |
+|---|---|---|---|---|---|
+
+Гроші: не рахуємо
+
+## Відкриті питання
+
+| Метрика (id) | Стаття цінності (id) | Поле | Питання | Кого питати | З якої дати |
+|---|---|---|---|---|---|
+| немає | немає | launched_at | Яка фактична дата запуску дашборда в роботу? Картка каже live, але точної дати ніхто не зафіксував | Ілля | 2026-10-30 |
+| dashboard-economic-goal | немає | baseline | Який управлінський ефект маємо зараз, до пілота? Потрібен зафіксований журнал рішень за попередній квартал | manual_measurement | 2026-10-30 |
+| live-automations-with-fresh-metric | немає | baseline | Яка зараз частка активних автоматизацій зі свіжим заміром, власником і ціллю? | manual_measurement | 2026-10-30 |
+| deviation-decisions-within-2-days | немає | baseline | Яка зараз частка відхилень, за якими рішення приймають протягом двох робочих днів? | manual_measurement | 2026-10-30 |
+| due-actions-with-repeat-measurement | немає | baseline | Яка зараз частка виправлень, які після настання строку отримують повторний замір? | manual_measurement | 2026-10-30 |
+
+Крім baseline, відкритими лишаються: вартість разової розробки й часу керівників на
+впровадження циклу (у бюджет $80/міс не входить), конкретна зайва підписка на $30/міс
+(ще не виявлена), і правило розподілу спільного ефекту між дашбордом і прискореною
+автоматизацією (без нього суму не можна додавати до портфеля).
+
 ## Assumptions
+
+- $1 000/міс додаткового ефекту проєкту, 14 днів прискорення й один такий випадок за
+  квартал — нові допущення 30.10.2026, а не статистика портфеля.
+- Одна зайва підписка на $30/міс існує і її можна припинити без рівноцінної заміни.
+- $20/міс хостингу і 4 год/міс підтримки за ставкою $15 з методики — припущення, не
+  рахунки.
+- Рішення за метриками справді ухвалюють і виконують; без прийняття бізнес-власником
+  пілот не стартує.
 - The owner's self-reported "time it used to take manually" is accurate enough to use
   as a baseline — it isn't independently verified against, say, old timesheets.
 - An automation's ROI stays roughly constant once registered; nothing here re-checks
@@ -212,20 +354,27 @@ badge correctly flips to "Оцінка," while the big number keeps showing the 
 "measured" value from the previous sync, because the number display itself
 (`automation_detail.html`'s `roi-number`) doesn't check confidence at all.
 
+Окремо до цієї гіпотези: прискорення запуску перетинається з вікном користі самої
+прискореної автоматизації, тому сума неадитивна щодо портфеля, доки не погоджено
+правило розподілу спільного ефекту. Падіння сканера безпеки 29–30.10 через 401 —
+сигнал для роботи, а не підстава стверджувати, що раніше на це витрачали якусь
+конкретну кількість годин або що вже уникнули інциденту.
+
 ## Confidence — Why
-Estimated by default, and this repo's own `dashboard/ROI.md` entry stays Estimated
-until a structured capture mechanism gets built and a real post-launch number
-replaces today's free-text estimate. That "until" is an editorial commitment this
-repo's maintainer is choosing to keep, not a technical gate — nothing in the code
-actually stops anyone from editing this repo's `ROI.md` to say "Measured" today, with
-or without a structured mechanism behind it (see Caveats' unenforced-gate point).
-And even honored, that transition only fixes "this card has no number yet" — it
-doesn't touch the self-report bias named in Caveats. A "measured" number typed by
-the automation's own owner is still unverified, and stays unverified after Estimated
-flips to Measured.
+
+Estimated. Жодного заміру ще не зроблено: цілі поставлені 30.10.2026, пілот стартує в
+листопаді після прийняття бізнес-власником, baseline усіх метрик невідомий. Measured
+стане можливим лише після першого заміру з точним періодом після дати запуску, яку ще
+належить з'ясувати.
+
+Навіть коли Estimated зміниться на Measured, це не прибирає ризик самозвіту з Caveats:
+число, яке вписав власник автоматизації, лишається неперевіреним. Підтвердження ставить
+адміністратор у дашборді, а не цей файл.
 
 ## Loose ends
 - **`measured_at`** — `ROIEntry` has a `measured_at` timestamp column
   (`models.py`), but nothing in the codebase ever sets or reads it (no sync path,
   form field, or template references it). It's schema, not a live mechanism; don't
-  assume a measurement date is tracked anywhere today.
+  assume a measurement date is tracked anywhere today. (Перевірено 30.10.2026: поле
+  досі ніде не читається й не пишеться. Заміри метрик живуть окремо, у
+  `MetricMeasurement`.)
