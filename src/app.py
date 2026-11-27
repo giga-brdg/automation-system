@@ -23,6 +23,7 @@ from . import ai_usage, github_sync, metrics_sync, telegram
 from . import stage1_questions
 from . import value_dashboard
 from .extensions import db, login_manager
+from .integration_api import register_integration_api
 from .models import (
     Automation,
     AutomationPage,
@@ -166,6 +167,8 @@ def create_app():
 
     register_routes(app)
     register_cli(app)
+    # Read-only JSON for Supplax Dashboard (src/integration_api.py): off unless INTEGRATION_API_TOKEN is set.
+    register_integration_api(app, csrf)
     return app
 
 
