@@ -39,7 +39,9 @@ from .models import (
     Status,
     Subscription,
     User,
+    _LEGACY_API_KEY,
     _now,
+    hash_api_key,
     hue_for,
 )
 
@@ -125,7 +127,13 @@ def create_app():
 
     @login_manager.user_loader
     def load_user(user_id):
-        return db.session.get(User, int(user_id))
+        # Same gate as /login: a session started before /revoke (or before the
+        # account lost its approval any other way) stops working on the very next
+        # request instead of living on until the cookie expires.
+        user = db.session.get(User, int(user_id))
+        if user is None or not (user.is_confirmed and user.is_approved):
+            return None
+        return user
 
     @app.template_filter("reflow")
     def reflow(text):
@@ -168,6 +176,22 @@ def admin_required(view):
             abort(403)
         return view(*args, **kwargs)
     return wrapped
+
+
+def _eligible_owner(raw_id):
+    """True if raw_id (form value or int) names a user who may own automations."""
+    try:
+        user = db.session.get(User, int(raw_id))
+    except (TypeError, ValueError):
+        return False
+    return user is not None and user.can_own_automations
+
+
+def _owner_choices(current_owner_id=None):
+    """People an Admin can pick as owner in the forms: approved Admins/Automators,
+    plus the automation's current owner so an edit never silently re-assigns it."""
+    users = User.query.order_by(User.name).all()
+    return [u for u in users if u.can_own_automations or u.id == current_owner_id]
 
 
 def automator_required(view):
@@ -644,6 +668,10 @@ def register_routes(app):
         dept_filter = request.args.get("department", type=int)
         search = request.args.get("q", "").strip()
 
+        # An unknown ?status= used to raise ValueError in Status(...) -> 500.
+        # Ignore it instead, the same way /value falls back on a bad value.
+        if status_filter and status_filter not in {s.value for s in Status}:
+            status_filter = None
         if status_filter:
             query = query.filter(Automation.status == Status(status_filter))
         if dept_filter:
@@ -783,6 +811,15 @@ def register_routes(app):
         if raw_usage_id and not raw_usage_id.isdigit():
             errors["ai_usage_project_id"] = "ID проєкту: тільки цифри."
 
+        # Only an Admin's form carries owner_id (apply_manual_form ignores it for
+        # anyone else). Same rule as /transfer: an approved Admin or Automator.
+        # Keeping the current owner is always allowed, even if they since lost access.
+        raw_owner = form.get("owner_id", "").strip()
+        if current_user.is_admin and raw_owner:
+            unchanged = automation is not None and raw_owner == str(automation.owner_id)
+            if not unchanged and not _eligible_owner(raw_owner):
+                errors["owner_id"] = "Власником може бути лише Automator або Admin з доступом."
+
         return errors
 
     def apply_manual_form(automation, form):
@@ -865,7 +902,7 @@ def register_routes(app):
     @login_required
     @automator_required
     def automation_new():
-        users = User.query.order_by(User.name).all()
+        users = _owner_choices()
         departments = Department.query.order_by(Department.name).all()
         skills = Skill.query.order_by(Skill.name).all()
         subscriptions = Subscription.query.order_by(Subscription.name).all()
@@ -901,7 +938,7 @@ def register_routes(app):
         automation = Automation.query.filter_by(slug=slug).first_or_404()
         if not current_user.can_manage(automation):
             abort(403)
-        users = User.query.order_by(User.name).all()
+        users = _owner_choices(automation.owner_id)
         departments = Department.query.order_by(Department.name).all()
         skills = Skill.query.order_by(Skill.name).all()
         subscriptions = Subscription.query.order_by(Subscription.name).all()
@@ -950,7 +987,7 @@ def register_routes(app):
     @login_required
     @automator_required
     def automation_import_github():
-        users = User.query.order_by(User.name).all()
+        users = _owner_choices()
         departments = Department.query.order_by(Department.name).all()
         if request.method == "POST":
             repo_url = request.form["repo_url"].strip()
@@ -960,6 +997,9 @@ def register_routes(app):
                 flash("Ця автоматизація вже зареєстрована іншим автоматизатором.", "error")
                 return redirect(url_for("automation_import_github"))
             owner_id = int(request.form["owner_id"]) if current_user.is_admin else current_user.id
+            if current_user.is_admin and not _eligible_owner(owner_id):
+                flash("Власником може бути лише Automator або Admin з доступом.", "error")
+                return redirect(url_for("automation_import_github"))
             try:
                 automation, warnings = sync_automation_from_github(
                     existing, repo_url, owner_id,
@@ -1166,7 +1206,7 @@ def register_routes(app):
         registered for that repo, since owning an API key alone shouldn't
         let someone queue scans for an automation they don't manage."""
         api_key = request.headers.get("X-API-Key")
-        caller = User.query.filter_by(api_key=api_key).first() if api_key else None
+        caller = User.by_api_key(api_key)
         if not caller:
             return jsonify({"error": "invalid or missing X-API-Key"}), 401
         if caller.role not in (Role.ADMIN, Role.AUTOMATOR) or not caller.is_approved:
@@ -1209,8 +1249,7 @@ def register_routes(app):
     def automation_detail(slug):
         automation = Automation.query.filter_by(slug=slug).first_or_404()
         usage_summary = ai_usage.get_usage_summary(automation) if automation.ai_usage_project_id else None
-        candidate_owners = (User.query.filter(User.role.in_((Role.ADMIN, Role.AUTOMATOR)))
-                            .order_by(User.name).all()) if current_user.is_admin else []
+        candidate_owners = _owner_choices() if current_user.is_admin else []
         return render_template("automation_detail.html", automation=automation, usage_summary=usage_summary,
                                 candidate_owners=candidate_owners)
 
@@ -1223,7 +1262,7 @@ def register_routes(app):
         writes a repo isn't always the one responsible for it afterwards."""
         automation = Automation.query.filter_by(slug=slug).first_or_404()
         new_owner = db.session.get(User, request.form.get("owner_id", type=int) or 0)
-        if new_owner is None or not (new_owner.is_admin or new_owner.is_automator):
+        if new_owner is None or not new_owner.can_own_automations:
             flash("Власником може бути лише Automator або Admin.", "error")
         else:
             automation.owner_id = new_owner.id
@@ -1391,9 +1430,9 @@ def register_routes(app):
         generated."""
         if current_user.id != user_id:
             abort(403)
-        current_user.api_key = secrets.token_hex(32)
+        new_key = current_user.issue_api_key()
         db.session.commit()
-        flash(f"Новий API-ключ: {current_user.api_key} — збережи його зараз, більше він ніде не покажеться.", "success")
+        flash(f"Новий API-ключ: {new_key} — збережи його зараз, більше він ніде не покажеться.", "success")
         return redirect(url_for("automator_profile", user_id=user_id))
 
     @app.route("/skills")
@@ -1582,7 +1621,7 @@ def register_routes(app):
         are auto-created - see references/portfolio-sync.md's payload schema
         for the exact shape expected."""
         api_key = request.headers.get("X-API-Key")
-        owner = User.query.filter_by(api_key=api_key).first() if api_key else None
+        owner = User.by_api_key(api_key)
         if not owner:
             return jsonify({"error": "invalid or missing X-API-Key"}), 401
         # is_approved, not just role: /revoke (src/telegram_bot.py) only ever
@@ -1683,7 +1722,7 @@ def register_routes(app):
         approved Automator/Admin, and still only the automation's own owner
         or an admin, matching api_sync_automation's ownership check."""
         api_key = request.headers.get("X-API-Key")
-        owner = User.query.filter_by(api_key=api_key).first() if api_key else None
+        owner = User.by_api_key(api_key)
         if not owner:
             return jsonify({"error": "invalid or missing X-API-Key"}), 401
         if owner.role not in (Role.ADMIN, Role.AUTOMATOR) or not owner.is_approved:
@@ -1736,6 +1775,20 @@ def register_cli(app):
             db.session.execute(db.text(stmt))
         db.session.commit()
         click.echo(f"Migrated: added {len(statements)} column(s) to user.")
+
+    @app.cli.command("migrate-hash-api-keys")
+    def migrate_hash_api_keys():
+        """One-off data migration: replace every legacy plaintext api_key (64 hex
+        chars) with hash_api_key(key). The same keys keep working - by_api_key
+        matches the hash - but a DB dump no longer contains usable keys. Safe to
+        run more than once (hashed rows are skipped)."""
+        n = 0
+        for user in User.query.all():
+            if _LEGACY_API_KEY.fullmatch(user.api_key or ""):
+                user.api_key = hash_api_key(user.api_key)
+                n += 1
+        db.session.commit()
+        click.echo(f"Hashed {n} legacy api_key value(s)." if n else "Already migrated - nothing to do.")
 
     @app.cli.command("migrate-confirm-attempts")
     def migrate_confirm_attempts():
@@ -2141,9 +2194,10 @@ def register_cli(app):
         user = User(email=email.strip().lower(), name=name.strip(), role=Role.ADMIN if admin else Role.VIEWER,
                     is_confirmed=True, is_approved=True)
         user.set_password(password)
+        api_key = user.issue_api_key()
         db.session.add(user)
         db.session.commit()
-        click.echo(f"Created {user.role.value} user {user.email} (api_key: {user.api_key})")
+        click.echo(f"Created {user.role.value} user {user.email} (api_key: {api_key})")
 
     @app.cli.command("seed-demo")
     @click.argument("owner_email")

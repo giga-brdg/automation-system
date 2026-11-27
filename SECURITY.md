@@ -238,6 +238,20 @@ checked directly against the deployed app after the migration ran.
   self-service `POST /automators/<id>/regenerate-api-key` route (strictly
   self-only, `403` otherwise) shows a freshly generated key once via flash,
   the same one-time-display convention `create_user` already used.
+- **API keys at rest — Fixed.** The `api_key` column held the live key in
+  plaintext, so a DB dump or backup leak was a set of working sync credentials.
+  It now stores only `sha256$` + base64(SHA-256(key)); `User.by_api_key()` hashes
+  the presented key and looks that up. A key is high-entropy random, so a fast
+  hash is enough (no salt/KDF needed). Legacy plaintext rows keep working and are
+  rewritten to the hash on first use; `flask migrate-hash-api-keys` rewrites the
+  rest in one go. The plaintext only exists at issue time (`/grant`, the
+  regenerate route, `create-user`).
+- **Revoked browser session — Fixed.** `/revoke` set `is_approved = False` but
+  `load_user` ignored it, so an open session kept working until the cookie
+  expired. `load_user` now returns `None` for an unapproved user.
+- **Owner assignment — Fixed.** The admin new/edit/GitHub-import forms accepted
+  any `owner_id`; they now apply the same rule as `/transfer` (approved
+  Admin/Automator), keeping the current owner as a valid no-op.
 
 ## Reporting a Vulnerability
 Report directly to the project owner. No name or contact is recorded in this repo

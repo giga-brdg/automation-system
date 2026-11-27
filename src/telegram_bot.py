@@ -17,7 +17,6 @@ Commands (admin only):
     /help                       - list commands
 """
 import os
-import secrets
 import time
 
 from . import telegram
@@ -69,10 +68,10 @@ def handle_command(text, reply):
         # never freshly issued at the moment access actually starts. Report
         # it here only for Automator/Admin - a Viewer's key is inert anyway
         # (api_sync_automation requires that role), no need to surface it.
-        user.api_key = secrets.token_hex(32)
+        new_key = user.issue_api_key()
         db.session.commit()
         if role_raw in ("automator", "admin"):
-            reply(f"Готово: {email} тепер {role_raw}.\nAPI-ключ (для API-синку автоматизацій): {user.api_key}")
+            reply(f"Готово: {email} тепер {role_raw}.\nAPI-ключ (для API-синку автоматизацій): {new_key}")
         else:
             reply(f"Готово: {email} тепер {role_raw}.")
     elif cmd == "/revoke" and len(parts) >= 2:
@@ -87,7 +86,7 @@ def handle_command(text, reply):
         # defense-in-depth rather than the only thing stopping it, but a
         # revoked account's old key still shouldn't keep validating against
         # anything that might check role alone.
-        user.api_key = secrets.token_hex(32)
+        user.issue_api_key()  # the new plaintext is discarded: nobody gets it
         db.session.commit()
         reply(f"Доступ {email} відкликано.")
     elif cmd == "/help":

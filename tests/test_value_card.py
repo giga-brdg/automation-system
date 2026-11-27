@@ -22,6 +22,16 @@ def _measured(date, value, kind="measured"):
             "source": "ТЕСТ scripts/count_stuck.py", "kind": kind, "note": ""}
 
 
+@pytest.fixture
+def page_today(monkeypatch):
+    """Render /value as of TODAY: the page calls build_context() without a date
+    (= the real today), so tests about freshness broke once the calendar passed
+    the measurement windows they were written against."""
+    real = value_dashboard.build_context
+    monkeypatch.setattr(value_dashboard, "build_context",
+                        lambda automations, today=None: real(automations, today=today or TODAY))
+
+
 def _fresh_metric(id, name, direction, before, after, primary=False, date="2026-10-20", **kw):
     return _metric(id=id, name=name, direction=direction, primary=primary,
                    baseline={"value": before, "period": "2026-04-01..2026-07-21", "source": "ТЕСТ звіт",
@@ -138,14 +148,14 @@ def test_fresh_line_texts():
     assert (line["before_text"], line["after_text"], line["target_text"]) == ("?", "57%", "ціль 70%")
 
 
-def test_fresh_line_renders_with_colour(app, client, automation):
+def test_fresh_line_renders_with_colour(app, client, automation, page_today):
     _sync(automation, _doc(None, metrics=[_fresh_metric("main", "ТЕСТ Головна", "down", 61, 57, primary=True)]))
     default, _ = _split(_page(client))
     assert '61% → <span class="fw-semibold text-success">57%</span> <i class="ti ti-arrow-down text-success"' in default
     assert "ціль 15%" in default and "замір 20.10.2026" in default
 
 
-def test_no_fresh_measurement_says_when_the_next_is_due(app, client, automation):
+def test_no_fresh_measurement_says_when_the_next_is_due(app, client, automation, page_today):
     _sync(automation, _doc(None, metrics=[_metric(check_every_days=120)]))
     default, more = _split(_page(client))
     assert "Свіжих замірів немає, наступний до 19.11.2026" in default  # launch 22.07 + 120 days

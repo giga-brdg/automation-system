@@ -90,6 +90,12 @@ settings, not in git:
   in one transaction over `railway ssh --service web`, after a fresh backup (see
   Rollback). Once the code is live, `flask --app src.app migrate-value-items`
   should answer "Already migrated".
+  `flask migrate-hash-api-keys` is a data-only migration (no schema change):
+  it rewrites every legacy plaintext `user.api_key` to `sha256$<hash>`. Order
+  is free: the new code accepts both forms and upgrades a plaintext row on first
+  use, so deploy first, then run `flask --app src.app migrate-hash-api-keys`
+  over `railway ssh --service web` so no plaintext key stays at rest. Keys
+  people already hold keep working. Re-running answers "Already migrated".
   A from-scratch or restored DB also has no login path until someone
   runs `flask --app src.app create-user <email> <name> --admin` (`src/app.py`'s
   `create-user` command, per `README.md`) to create the first admin — without
@@ -108,8 +114,9 @@ settings, not in git:
   confirmation_prompt=True)`), so run it from an interactive `railway ssh
   --service web` session, not as a one-shot command. One more thing this step produces that whoever runs it needs to
   handle deliberately: `create-user`'s success output is
-  `click.echo(f"Created ... (api_key: {user.api_key})")` — it prints the new
-  admin's `api_key` in plain text. `README.md` already flags this key as
+  `click.echo(f"Created ... (api_key: {api_key})")` — it prints the new
+  admin's `api_key` in plain text (the only time it exists in plaintext: the DB
+  keeps just its hash). `README.md` already flags this key as
   printed exactly once with no UI to view or regenerate it, and `SECURITY.md`
   treats any `api_key` as a live credential regardless of source — so running
   this against prod means capturing that terminal output somewhere safe

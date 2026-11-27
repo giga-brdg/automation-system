@@ -14,6 +14,8 @@ from src.models import Automation, Role, User
 def _make_user(email, name, role=Role.AUTOMATOR, is_approved=True, password="pw12345"):
     user = User(email=email, name=name, role=role, is_confirmed=True, is_approved=is_approved)
     user.set_password(password)
+    # Only the hash is stored; keep the plaintext on the object for X-API-Key calls.
+    user.plain_api_key = user.issue_api_key()
     db.session.add(user)
     db.session.commit()
     return user
@@ -31,7 +33,7 @@ class TestApiTriggerSecurityScan:
                                      repo_url="https://github.com/acme/thing")
             db.session.add(automation)
             db.session.commit()
-            key = user.api_key
+            key = user.plain_api_key
 
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/thing"},
                             headers={"X-API-Key": key})
@@ -47,7 +49,7 @@ class TestApiTriggerSecurityScan:
         monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
         with app.app_context():
             user = _make_user("a@x.com", "A", is_approved=False)
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/thing"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 403
@@ -56,7 +58,7 @@ class TestApiTriggerSecurityScan:
         monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
         with app.app_context():
             user = _make_user("a@x.com", "A", role=Role.VIEWER)
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/thing"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 403
@@ -76,7 +78,7 @@ class TestApiTriggerSecurityScan:
                                      repo_url="https://github.com/acme/thing")
             db.session.add(automation)
             db.session.commit()
-            other_key = other.api_key
+            other_key = other.plain_api_key
 
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/thing"},
                             headers={"X-API-Key": other_key})
@@ -95,7 +97,7 @@ class TestApiTriggerSecurityScan:
                                      repo_url="https://github.com/acme/thing")
             db.session.add(automation)
             db.session.commit()
-            admin_key = admin.api_key
+            admin_key = admin.plain_api_key
 
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/thing"},
                             headers={"X-API-Key": admin_key})
@@ -106,7 +108,7 @@ class TestApiTriggerSecurityScan:
         monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
         with app.app_context():
             user = _make_user("a@x.com", "A")
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/nope"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 404
@@ -115,7 +117,7 @@ class TestApiTriggerSecurityScan:
         monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
         with app.app_context():
             user = _make_user("a@x.com", "A")
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/security-scan/trigger", json={"repo": "not-a-repo"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 400
@@ -132,7 +134,7 @@ class TestApiTriggerSecurityScan:
                                      repo_url="https://github.com/acme/thing")
             db.session.add(automation)
             db.session.commit()
-            key = user.api_key
+            key = user.plain_api_key
 
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/thing"},
                             headers={"X-API-Key": key})
@@ -145,7 +147,7 @@ class TestApiTriggerSecurityScan:
         monkeypatch.setenv("SECURITY_SCAN_TRIGGER_TOKEN", "trigger-tok")
         with app.app_context():
             user = _make_user("a@x.com", "A")
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/security-scan/trigger", json={"repo": "acme/thing"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 404  # reached the lookup, not a CSRF 302/400
