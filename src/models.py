@@ -1,5 +1,8 @@
+import base64
 import enum
+import hashlib
 import json
+import re
 import secrets
 from datetime import datetime, timezone
 
@@ -66,6 +69,18 @@ def hue_for(name):
     return h
 
 
+API_KEY_HASH_PREFIX = "sha256$"
+_LEGACY_API_KEY = re.compile(r"[0-9a-f]{64}")
+
+
+def hash_api_key(key):
+    """What the DB stores for an api_key: "sha256$" + unpadded urlsafe base64 of
+    the SHA-256 digest (50 chars - fits the existing VARCHAR(64), and can never be
+    mistaken for a legacy plaintext key, which is exactly 64 hex chars)."""
+    digest = hashlib.sha256(key.encode()).digest()
+    return API_KEY_HASH_PREFIX + base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False)
@@ -74,9 +89,12 @@ class User(UserMixin, db.Model):
     role = db.Column(db.Enum(Role), nullable=False, default=Role.VIEWER)
     # Per-automator token so a skill can push automation data on their behalf
     # (see the "register-automation" skill this is meant to support) without
-    # sharing a browser login/password. Never displayed after generation -
-    # only regenerated, same as CLICKUP_API_TOKEN's own security posture.
-    api_key = db.Column(db.String(64), unique=True, nullable=False, default=lambda: secrets.token_hex(32))
+    # sharing a browser login/password. Stored only as hash_api_key(key): the
+    # plaintext is shown once by whoever issues it (issue_api_key) and a DB dump
+    # does not hand out working keys. The column default is the hash of a key
+    # nobody ever sees, i.e. a key that works only once it is (re)issued.
+    api_key = db.Column(db.String(64), unique=True, nullable=False,
+                        default=lambda: hash_api_key(secrets.token_hex(32)))
     created_at = db.Column(db.DateTime, default=_now)
     # GitHub login, so the org-wide scan can hand a newly-discovered repo to
     # whoever actually writes it instead of parking every one of them on
@@ -105,6 +123,34 @@ class User(UserMixin, db.Model):
     pending_code_attempts = db.Column(db.Integer, nullable=False, default=0)
 
     automations = db.relationship("Automation", back_populates="owner")
+
+    def issue_api_key(self):
+        """Rotate the key: store its hash, return the plaintext (show it once)."""
+        key = secrets.token_hex(32)
+        self.api_key = hash_api_key(key)
+        return key
+
+    @classmethod
+    def by_api_key(cls, key):
+        """The user an X-API-Key belongs to, or None. A row still holding a
+        legacy plaintext key (issued before keys were hashed) is matched once and
+        upgraded to the hash on the spot; only a 64-hex value is tried that way,
+        so a stored "sha256$..." value copied out of the DB never works as a key."""
+        if not key:
+            return None
+        user = cls.query.filter_by(api_key=hash_api_key(key)).first()
+        if user is None and _LEGACY_API_KEY.fullmatch(key):
+            user = cls.query.filter_by(api_key=key).first()
+            if user is not None:
+                user.api_key = hash_api_key(key)
+                db.session.commit()
+        return user
+
+    @property
+    def can_own_automations(self):
+        """Who may be an automation's owner: an approved Admin or Automator
+        (the same rule /transfer and the API sync apply)."""
+        return self.role in (Role.ADMIN, Role.AUTOMATOR) and bool(self.is_approved)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)

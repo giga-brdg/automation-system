@@ -6,7 +6,7 @@ for the vulnerabilities each test guards against."""
 import re
 
 from src.extensions import db
-from src.models import Role, User
+from src.models import Role, User, hash_api_key
 from src import telegram
 
 
@@ -19,6 +19,8 @@ def _csrf_token(html):
 def _make_user(email, name, role=Role.VIEWER, is_confirmed=True, is_approved=True, password="pw12345"):
     user = User(email=email, name=name, role=role, is_confirmed=is_confirmed, is_approved=is_approved)
     user.set_password(password)
+    # Only the hash is stored; keep the plaintext on the object for X-API-Key calls.
+    user.plain_api_key = user.issue_api_key()
     db.session.add(user)
     db.session.commit()
     return user
@@ -126,7 +128,10 @@ class TestApiKeyRotation:
             assert user.role == Role.AUTOMATOR
             assert user.is_approved
             assert user.api_key != old_key
-            assert any(user.api_key in r for r in replies), "new key must be relayed for automator/admin"
+            relayed = [m for r in replies for m in re.findall(r"\b[0-9a-f]{64}\b", r)]
+            assert relayed, "new key must be relayed for automator/admin"
+            assert user.api_key == hash_api_key(relayed[0]), "the DB keeps only the hash of the relayed key"
+            assert relayed[0] not in user.api_key
 
     def test_grant_does_not_relay_a_key_for_plain_viewer(self, app):
         from src.telegram_bot import handle_command
@@ -207,7 +212,7 @@ class TestApiSyncApproval:
     def test_rejects_a_role_matching_but_unapproved_account(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A", role=Role.AUTOMATOR, is_approved=False)
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/automations/some-slug/sync", json={"name": "X"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 403
@@ -215,7 +220,7 @@ class TestApiSyncApproval:
     def test_accepts_an_approved_automator(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A", role=Role.AUTOMATOR, is_approved=True)
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/automations/some-slug/sync", json={"name": "X"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 200
@@ -226,7 +231,7 @@ class TestApiSyncApproval:
         redirect/400 would not be)."""
         with app.app_context():
             user = _make_user("a@x.com", "A", role=Role.AUTOMATOR, is_approved=True)
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.post("/api/automations/some-slug/sync", json={"name": "X"},
                             headers={"X-API-Key": key})
         assert resp.status_code == 200

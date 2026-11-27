@@ -18,6 +18,8 @@ def _csrf_token(html):
 def _make_user(email, name, role=Role.AUTOMATOR, is_approved=True, password="pw12345"):
     user = User(email=email, name=name, role=role, is_confirmed=True, is_approved=is_approved)
     user.set_password(password)
+    # Only the hash is stored; keep the plaintext on the object for X-API-Key calls.
+    user.plain_api_key = user.issue_api_key()
     db.session.add(user)
     db.session.commit()
     return user
@@ -109,21 +111,21 @@ class TestStage1AnswersApi:
     def test_rejects_unapproved_account(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A", is_approved=False)
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.get("/api/automations/thing/stage1-answers", headers={"X-API-Key": key})
         assert resp.status_code == 403
 
     def test_404_when_no_automation(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A")
-            key = user.api_key
+            key = user.plain_api_key
         resp = client.get("/api/automations/does-not-exist/stage1-answers", headers={"X-API-Key": key})
         assert resp.status_code == 404
 
     def test_404_when_no_answers_filled_yet(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A")
-            key = user.api_key
+            key = user.plain_api_key
             automation = Automation(slug="thing", name="Thing", owner_id=user.id)
             db.session.add(automation)
             db.session.commit()
@@ -133,7 +135,7 @@ class TestStage1AnswersApi:
     def test_returns_answers_for_the_owner(self, app, client):
         with app.app_context():
             user = _make_user("a@x.com", "A")
-            key = user.api_key
+            key = user.plain_api_key
             automation = Automation(slug="thing", name="Thing", owner_id=user.id,
                                      stage1_answers={"1": {"one_liner": "X"}})
             db.session.add(automation)
@@ -146,7 +148,7 @@ class TestStage1AnswersApi:
         with app.app_context():
             owner = _make_user("owner@x.com", "Owner")
             other = _make_user("other@x.com", "Other")
-            other_key = other.api_key
+            other_key = other.plain_api_key
             automation = Automation(slug="thing", name="Thing", owner_id=owner.id,
                                      stage1_answers={"1": {"one_liner": "X"}})
             db.session.add(automation)
@@ -158,7 +160,7 @@ class TestStage1AnswersApi:
         with app.app_context():
             owner = _make_user("owner@x.com", "Owner")
             admin = _make_user("admin@x.com", "Admin", role=Role.ADMIN)
-            admin_key = admin.api_key
+            admin_key = admin.plain_api_key
             automation = Automation(slug="thing", name="Thing", owner_id=owner.id,
                                      stage1_answers={"1": {"one_liner": "X"}})
             db.session.add(automation)

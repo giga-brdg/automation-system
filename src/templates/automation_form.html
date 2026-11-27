@@ -37,12 +37,13 @@
       <div class="mb-3">
         <label class="form-label">Власник</label>
         {% if current_user.is_admin %}
-        <select name="owner_id" class="form-select">
+        <select name="owner_id" class="form-select {{ 'is-invalid' if errors and errors.owner_id }}">
           {% for u in users %}
           {% set selected_id = (form_data.owner_id|int) if form_data and form_data.owner_id else (automation.owner_id if automation else current_user.id) %}
           <option value="{{ u.id }}" {% if u.id == selected_id %}selected{% endif %}>{{ u.name }}</option>
           {% endfor %}
         </select>
+        {% if errors and errors.owner_id %}<div class="invalid-feedback">{{ errors.owner_id }}</div>{% endif %}
         {% else %}
         <input type="text" class="form-control" value="{{ current_user.name }}" disabled>
         {% endif %}
